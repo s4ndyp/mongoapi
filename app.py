@@ -2,6 +2,7 @@ import os
 import datetime
 import json
 import secrets # Voor API Key authenticatie
+import string # Voor random key generatie
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, abort
 from flask_cors import CORS 
 from pymongo import MongoClient
@@ -9,21 +10,27 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 from flask_limiter import Limiter # Voor Rate Limiting (Feature 6)
 from flask_limiter.util import get_remote_address # Nodig voor Limiter
 
-# --- STATIC API KEYS (Feature 1: Authenticatie) ---
-# In een echte app zouden deze uit een database of HashiCorp Vault komen.
-# Gebruik de source_app naam als API key ID.
+# --- STATIC API KEYS (Feature 1: Authenticatie & Generatie) ---
+# Format: {client_id: {'key': key_string, 'description': 'Omschrijving'}}
 API_KEYS = {
-    "Webshop_Kassa_1": "KASSA_SECRET_12345", 
-    "Mobiele_App_2": "MOB_APP_SECRET_67890"
+    "Webshop_Kassa_1": {"key": "KASSA_SECRET_12345", "description": "Webshop kassa systeem"}, 
+    "Mobiele_App_2": {"key": "MOB_APP_SECRET_67890", "description": "Interne mobiele app voor logs"}
 }
+
+# --- Helper voor Key Generatie ---
+def generate_random_key(length=20):
+    """Genereert een willekeurige alfanumerieke sleutel van opgegeven lengte."""
+    characters = string.ascii_letters + string.digits + string.punctuation.replace('"', '').replace("'", '')
+    return ''.join(secrets.choice(characters) for _ in range(length))
+
 # Functie om de client te identificeren voor Rate Limiting (Feature 6)
 def get_client_id():
     # Probeer de API key (Authorization header) te gebruiken voor Rate Limiting
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         token = auth_header.split(' ')[1]
-        for client_id, key in API_KEYS.items():
-            if token == key:
+        for client_id, data in API_KEYS.items():
+            if token == data['key']:
                 return client_id
     # Val terug op IP-adres als er geen geldige token is
     return get_remote_address()
@@ -34,7 +41,6 @@ app = Flask(__name__)
 # Voeg CORS toe: Staat alle origins toe om de API-endpoints te benaderen.
 CORS(app) 
 # Initialiseer Limiter (Feature 6: Rate Limiting)
-# Gebruikt de 'get_client_id' functie om de client te identificeren
 limiter = Limiter(
     key_func=get_client_id, # <-- Deze instelling is voldoende!
     app=app, 
@@ -115,8 +121,11 @@ def require_api_key(f):
         
         token = auth_header.split(' ')[1]
         
-        # Zoek de client_id die overeenkomt met de token
-        client_id = next((c for c, key in API_KEYS.items() if key == token), None)
+        client_id = None
+        for cid, data in API_KEYS.items(): # Controleer tegen de 'key' waarde in de dictionary
+            if data['key'] == token:
+                client_id = cid
+                break
         
         if client_id:
             # Sla de client_id op in de request context voor logging/rate limiting
@@ -337,8 +346,8 @@ CLIENT_DETAIL_CONTENT = """
         <h5 class="card-title mb-3">Client Informatie</h5>
         <p><strong>Laatste 24u Requests:</strong> <span class="badge bg-primary">{{ total_requests }}</span></p>
         <p><strong>Toegestane API Sleutel:</strong> 
-            {% if api_key != 'N/A' %}
-                <span class="badge bg-success">{{ api_key }}</span>
+            {% if api_key_length > 0 %}
+                <span class="badge bg-success">*** ({{ api_key_length }} tekens)</span>
             {% else %}
                 <span class="badge bg-danger">Geen sleutel gevonden</span>
             {% endif %}
@@ -396,20 +405,43 @@ SETTINGS_CONTENT = """
                     </button>
                 </form>
             </div>
+
+            <!-- Nieuwe Sectie: API Sleutel Generatie -->
+            <div class="card p-4 mt-4">
+                <h5 class="card-title mb-3">API Sleutel Generatie</h5>
+                <p class="text-muted small">Genereer een nieuwe, unieke API-sleutel (20 tekens) voor een client. De sleutel wordt **éénmalig** getoond in een melding.</p>
+                <form method="POST" action="/settings">
+                    <div class="mb-3">
+                        <label for="key_description" class="form-label">Omschrijving Client</label>
+                        <input type="text" class="form-control bg-dark text-white border-secondary" 
+                               id="key_description" name="key_description" required placeholder="Bijv. Webshop Backend V2">
+                    </div>
+                    <button type="submit" name="action" value="generate_key" class="btn btn-success">
+                        <i class="bi bi-key"></i> Genereer API Sleutel
+                    </button>
+                </form>
+            </div>
         </div>
         
         <div class="col-md-6">
             <div class="card p-4">
-                <h5 class="card-title mb-3">API Sleutels</h5>
-                <p>Ondersteunde API Sleutels voor authenticatie:</p>
+                <h5 class="card-title mb-3">Actieve API Sleutels</h5>
+                <p>Deze sleutels worden gebruikt om verkeer te authenticeren en te limiteren.</p>
                 <ul class="list-group">
-                    {% for id, key in api_keys.items() %}
+                    {% for id, data in api_keys.items() %}
                     <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <strong>{{ id }}:</strong> <code>{{ key }}</code>
+                        <div>
+                            <strong>{{ data.description }}:</strong> 
+                            <span class="text-muted small">({{ id }})</span>
+                        </div>
+                        <!-- Sleutel wordt gemaskeerd -->
+                        <code>*** ({{ data.key | length }} tekens)</code> 
                     </li>
+                    {% else %}
+                    <li class="list-group-item bg-transparent text-muted">Geen actieve sleutels. Gebruik de generator.</li>
                     {% endfor %}
                 </ul>
-                <div class="form-text text-muted mt-3">Gebruik deze sleutels in de 'Authorization: Bearer' header.</div>
+                <div class="form-text text-muted mt-3">Sleutels worden gemaskeerd voor beveiliging. Nieuwe sleutels worden éénmalig getoond na generatie.</div>
             </div>
         </div>
     </div>
@@ -490,9 +522,12 @@ def client_detail(source_app):
     client, error = get_db_connection()
     logs = []
     total_requests = 0
+    api_key_length = 0
     
-    # Zoek de API key voor weergave
-    api_key = API_KEYS.get(source_app, "N/A")
+    # Zoek de API key lengte voor weergave
+    api_key_data = API_KEYS.get(source_app)
+    if api_key_data:
+        api_key_length = len(api_key_data['key'])
 
     if client:
         try:
@@ -525,7 +560,7 @@ def client_detail(source_app):
     rendered_content = render_template_string(CLIENT_DETAIL_CONTENT,
                                             source_app=source_app,
                                             total_requests=total_requests,
-                                            api_key=api_key,
+                                            api_key_length=api_key_length,
                                             logs=logs)
     
     return render_template_string(BASE_LAYOUT, 
@@ -536,14 +571,37 @@ def client_detail(source_app):
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     if request.method == 'POST':
-        new_uri = request.form.get('mongo_uri')
         action = request.form.get('action')
         
-        # Sla de nieuwe URI op in de configuratie
-        app.config['MONGO_URI'] = new_uri
+        if action == 'generate_key':
+            description = request.form.get('key_description', 'Nieuwe client')
+            new_key = generate_random_key(20)
+            
+            # Creëer een unieke client ID
+            base_name = description.replace(' ', '_').replace('-', '_').replace('.', '').lower()
+            i = 1
+            client_id = base_name
+            while client_id in API_KEYS:
+                client_id = f"{base_name}_{i}"
+                i += 1
+
+            # Sla de nieuwe sleutel op in de globale dictionary
+            API_KEYS[client_id] = {"key": new_key, "description": description}
+            
+            # Flash de key voor eenmalige weergave
+            flash(f'NIEUWE SLEUTEL ({description}): {new_key}. Deze sleutel wordt nu gemaskeerd.', 'success')
+            
+            # Voorkom herhaling van POST (POST-Redirect-GET)
+            return redirect(url_for('settings'))
+
+        # Logica voor opslaan/testen database URI
+        new_uri = request.form.get('mongo_uri')
+        
+        if new_uri:
+            app.config['MONGO_URI'] = new_uri
         
         if action == 'test':
-            client, error = get_db_connection(new_uri)
+            client, error = get_db_connection(app.config['MONGO_URI'])
             if client:
                 flash('Verbinding succesvol! Database is bereikbaar.', 'success')
             else:
