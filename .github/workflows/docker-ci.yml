@@ -1,0 +1,32 @@
+name: Docker CI/CD voor API Gateway
+
+on:
+  push:
+    branches: [ "main" ] # Start de workflow bij een push naar de 'main' branch
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      # Zorgt voor een efficiëntere manier om Docker-images te bouwen
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in op Docker Hub
+      # Gebruikt de opgeslagen GitHub Secrets voor authenticatie
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Bouw en Push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: . # Zoek naar Dockerfile in de root van de repository
+        push: true # Zorg ervoor dat de image na het bouwen wordt geüpload
+        tags: ${{ secrets.DOCKER_USERNAME }}/api-gateway:latest # De tag van de image op Docker Hub
+        # Let op: De naam api-gateway moet overeenkomen met de naam van je repository op Docker Hub
