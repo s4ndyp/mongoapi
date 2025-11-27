@@ -7,7 +7,11 @@ on:
 jobs:
   build_and_push:
     runs-on: ubuntu-latest
-    
+    # Voeg rechten toe om naar de GitHub Container Registry te schrijven
+    permissions:
+      contents: read
+      packages: write
+      
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -16,17 +20,18 @@ jobs:
       # Zorgt voor een efficiëntere manier om Docker-images te bouwen
       uses: docker/setup-buildx-action@v3
 
-    - name: Log in op Docker Hub
-      # Gebruikt de opgeslagen GitHub Secrets voor authenticatie
+    - name: Log in op GitHub Container Registry (GHCR)
+      # Gebruikt de ingebouwde GITHUB_TOKEN voor veilige authenticatie
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Bouw en Push Docker image
+    - name: Bouw en Push Docker image naar GHCR
       uses: docker/build-push-action@v5
       with:
         context: . # Zoek naar Dockerfile in de root van de repository
         push: true # Zorg ervoor dat de image na het bouwen wordt geüpload
-        tags: ${{ secrets.DOCKER_USERNAME }}/api-gateway:latest # De tag van de image op Docker Hub
-        # Let op: De naam api-gateway moet overeenkomen met de naam van je repository op Docker Hub
+        # Tag formaat voor GHCR: ghcr.io/GEBRUIKER/REPO_NAAM:tag
+        tags: ghcr.io/${{ github.repository }}:latest
