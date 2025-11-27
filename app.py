@@ -321,7 +321,7 @@ BASE_LAYOUT = """
             data: {
                 labels: chartData.labels,
                 datasets: [{
-                    label: 'API Requests per Uur',
+                    label: 'API Requests',
                     data: chartData.counts,
                     backgroundColor: 'rgba(13, 110, 253, 0.6)',
                     borderColor: '#0d6efd',
@@ -391,7 +391,23 @@ DASHBOARD_CONTENT = """
     <div class="row">
         <div class="col-md-8">
             <div class="card p-3">
-                <h5 class="card-title">Recente Activiteit (Laatste 6 uur)</h5>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="card-title m-0">Recente Activiteit</h5>
+                    <!-- Nieuwe filter dropdown -->
+                    <div class="dropdown">
+                        <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            Bereik: {{ current_range_label }}
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-dark">
+                            <li><a class="dropdown-item {{ 'active' if time_range == '6h' else '' }}" href="{{ url_for('dashboard', range='6h') }}">Laatste 6 uur</a></li>
+                            <li><a class="dropdown-item {{ 'active' if time_range == '24h' else '' }}" href="{{ url_for('dashboard', range='24h') }}">Laatste 24 uur</a></li>
+                            <li><a class="dropdown-item {{ 'active' if time_range == '7d' else '' }}" href="{{ url_for('dashboard', range='7d') }}">Laatste Week (7 dagen)</a></li>
+                            <li><a class="dropdown-item {{ 'active' if time_range == '30d' else '' }}" href="{{ url_for('dashboard', range='30d') }}">Laatste Maand (30 dagen)</a></li>
+                            <li><a class="dropdown-item {{ 'active' if time_range == '365d' else '' }}" href="{{ url_for('dashboard', range='365d') }}">Laatste Jaar (365 dagen)</a></li>
+                        </ul>
+                    </div>
+                </div>
+                
                 <!-- Feature 4: Verborgen JSON data voor de Chart -->
                 <script id="chart-data" type="application/json">
                     {{ chart_data | tojson | safe }}
@@ -490,7 +506,7 @@ SETTINGS_CONTENT = """
                 </form>
             </div>
 
-            <!-- Sectie: API Sleutel Generatie -->
+            <!-- Nieuwe Sectie: API Sleutel Generatie -->
             <div class="card p-4 mt-4">
                 <h5 class="card-title mb-3">API Sleutel Generatie</h5>
                 <p class="text-muted small">Genereer een nieuwe, unieke API-sleutel (20 tekens) voor een client. De sleutel wordt **éénmalig** getoond in een melding.</p>
@@ -583,6 +599,22 @@ SETTINGS_CONTENT = """
 
 @app.route('/')
 def dashboard():
+    # Nieuwe logica voor tijdfilter:
+    time_range = request.args.get('range', '6h') # Standaard naar 6 uur
+    
+    range_map = {
+        '6h': {'delta': datetime.timedelta(hours=6), 'label': 'Laatste 6 uur', 'group': '%H:00', 'fill_interval': 'hour'},
+        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 uur', 'group': '%H:00', 'fill_interval': 'hour'},
+        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste Week', 'group': '%a %d', 'fill_interval': 'day'}, # Dag van de week
+        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste Maand', 'group': '%d %b', 'fill_interval': 'day'}, # Dag en maand
+        '365d': {'delta': datetime.timedelta(days=365), 'label': 'Laatste Jaar', 'group': '%b %Y', 'fill_interval': 'month'}, # Maand en jaar
+    }
+    
+    current_range = range_map.get(time_range, range_map['6h'])
+    delta = current_range['delta']
+    start_time = datetime.datetime.utcnow() - delta
+    
+    # --- MongoDB Connectie en Basis Statistieken ---
     client, error = get_db_connection()
     db_connected = client is not None
     
@@ -594,39 +626,63 @@ def dashboard():
         try:
             db = client['api_gateway_db']
             
-            # --- Berekeningen voor Dashboard ---
+            # --- Basis Statistieken (altijd op 24u) ---
             yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            
-            # Totaal Requests (24u)
             stats_count = db['statistics'].count_documents({'timestamp': {'$gte': yesterday}})
-            
-            # Actieve Clients
             unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
             
-            # Feature 4: Data voor Grafiek (Requests per uur over de laatste 6 uur)
+            # --- Feature: Dynamische Grafiek Data (Gebaseerd op geselecteerde range) ---
+            
+            # 1. MongoDB Aggregation Pipeline
             pipeline = [
-                {'$match': {'timestamp': {'$gte': datetime.datetime.utcnow() - datetime.timedelta(hours=6)}}},
+                {'$match': {'timestamp': {'$gte': start_time}}},
                 {'$group': {
-                    '_id': {'$hour': '$timestamp'}, 
+                    '_id': {'$dateToString': {'format': current_range['group'], 'date': '$timestamp'}}, 
                     'count': {'$sum': 1},
                     'latest_time': {'$max': '$timestamp'}
                 }},
                 {'$sort': {'latest_time': 1}}
             ]
-            hourly_counts = list(db['statistics'].aggregate(pipeline))
+            aggregated_counts = list(db['statistics'].aggregate(pipeline))
+            
+            # Converteer aggregation resultaat naar een dictionary voor sneller zoeken
+            agg_dict = {item['_id']: item['count'] for item in aggregated_counts}
 
-            # Bereid de grafiekdata voor de laatste 6 uur voor
+            # 2. Label Generatie en Data Vulling (vult gaten op waar count = 0)
             chart_labels = []
             chart_counts = []
+            current = start_time
             now = datetime.datetime.utcnow()
-            for i in range(6):
-                hour_ago = now - datetime.timedelta(hours=6 - i)
-                hour_label = hour_ago.strftime('%H:00')
-                chart_labels.append(hour_label)
+
+            # Bepaal hoe te itereren (uur, dag, maand)
+            if current_range['fill_interval'] == 'hour':
+                while current < now:
+                    label = current.strftime('%H:00')
+                    chart_labels.append(label)
+                    chart_counts.append(agg_dict.get(label, 0))
+                    current += datetime.timedelta(hours=1)
+            elif current_range['fill_interval'] == 'day':
+                while current < now:
+                    label = current.strftime(current_range['group'])
+                    chart_labels.append(label)
+                    chart_counts.append(agg_dict.get(label, 0))
+                    current += datetime.timedelta(days=1)
+            elif current_range['fill_interval'] == 'month':
+                # Gebruik start van de maand voor correcte labels
+                current = datetime.datetime(current.year, current.month, 1)
                 
-                # Zoek de telling voor dit uur
-                found_count = next((item['count'] for item in hourly_counts if item['_id'] == hour_ago.hour), 0)
-                chart_counts.append(found_count)
+                while current < now:
+                    label = current.strftime(current_range['group'])
+                    chart_labels.append(label)
+                    chart_counts.append(agg_dict.get(label, 0))
+                    
+                    # Ga naar de volgende maand
+                    next_month = current.month + 1
+                    next_year = current.year
+                    if next_month > 12:
+                        next_month = 1
+                        next_year += 1
+                    current = datetime.datetime(next_year, next_month, 1)
             
             chart_data = {"labels": chart_labels, "counts": chart_counts}
             
@@ -640,7 +696,9 @@ def dashboard():
                                             stats_count=stats_count,
                                             client_count=len(unique_clients),
                                             clients=unique_clients,
-                                            chart_data=chart_data) # Feature 4: Chart data toegevoegd
+                                            chart_data=chart_data,
+                                            time_range=time_range, # Nieuw: Huidige range voor dropdown
+                                            current_range_label=current_range['label']) # Nieuw: Huidige label voor dropdown
             
     # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
