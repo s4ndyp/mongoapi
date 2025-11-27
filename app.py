@@ -271,15 +271,19 @@ def dashboard():
             unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
         except Exception:
             pass
+    
+    # Eerst de specifieke inhoud renderen met de benodigde variabelen
+    rendered_content = render_template_string(DASHBOARD_CONTENT,
+                                            db_connected=db_connected,
+                                            db_uri=app.config['MONGO_URI'],
+                                            stats_count=stats_count,
+                                            client_count=len(unique_clients),
+                                            clients=unique_clients)
             
+    # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
                                   page='dashboard',
-                                  page_content=DASHBOARD_CONTENT,
-                                  db_connected=db_connected,
-                                  db_uri=app.config['MONGO_URI'],
-                                  stats_count=stats_count,
-                                  client_count=len(unique_clients),
-                                  clients=unique_clients)
+                                  page_content=rendered_content)
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
@@ -300,11 +304,15 @@ def settings():
         elif action == 'save':
             flash('Instellingen opgeslagen (sessie). Herstart container voor permanente wijziging.', 'info')
             
+    # Eerst de specifieke inhoud renderen met de benodigde variabelen
+    rendered_content = render_template_string(SETTINGS_CONTENT,
+                                            current_uri=app.config['MONGO_URI'],
+                                            env_host=os.environ.get('HOSTNAME', 'Unknown'))
+    
+    # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
                                   page='settings', 
-                                  page_content=SETTINGS_CONTENT,
-                                  current_uri=app.config['MONGO_URI'],
-                                  env_host=os.environ.get('HOSTNAME', 'Unknown'))
+                                  page_content=rendered_content)
 
 # --- API Endpoints voor externe Apps ---
 
