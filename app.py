@@ -36,7 +36,7 @@ CORS(app)
 # Initialiseer Limiter (Feature 6: Rate Limiting)
 # Gebruikt de 'get_client_id' functie om de client te identificeren
 limiter = Limiter(
-    key_func=get_client_id, 
+    key_func=get_client_id, # <-- Deze instelling is voldoende!
     app=app, 
     default_limits=["200 per day", "50 per hour"], # Standaardlimieten
     storage_uri="memory://" # Gebruik geheugen voor eenvoud
@@ -578,8 +578,8 @@ def health_check():
 
 @app.route('/api/data', methods=['POST']) # <-- Versie verwijderd
 @require_api_key # Feature 1: Vereist een geldige Bearer Token
-@limiter.limit("50 per hour", override_key=get_client_id) # Feature 6: Rate Limiting
-@limiter.limit("200 per day", override_key=get_client_id) # Feature 6: Tweede limiet
+@limiter.limit("50 per hour") # FIX: 'override_key=get_client_id' verwijderd
+@limiter.limit("200 per day") # FIX: 'override_key=get_client_id' verwijderd
 def handle_data():
     """
     Endpoint waar clients data naartoe sturen.
