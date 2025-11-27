@@ -12,6 +12,7 @@ from flask_limiter.util import get_remote_address # Nodig voor Limiter
 
 # --- STATIC API KEYS (Feature 1: Authenticatie & Generatie) ---
 # Format: {client_id: {'key': key_string, 'description': 'Omschrijving'}}
+# LET OP: Deze sleutels zijn NIET persistent bij herstart van de container.
 API_KEYS = {
     "Webshop_Kassa_1": {"key": "KASSA_SECRET_12345", "description": "Webshop kassa systeem"}, 
     "Mobiele_App_2": {"key": "MOB_APP_SECRET_67890", "description": "Interne mobiele app voor logs"}
@@ -20,6 +21,7 @@ API_KEYS = {
 # --- Helper voor Key Generatie ---
 def generate_random_key(length=20):
     """Genereert een willekeurige alfanumerieke sleutel van opgegeven lengte."""
+    # Verwijder aanhalingstekens uit de tekenset om JSON-problemen te voorkomen
     characters = string.ascii_letters + string.digits + string.punctuation.replace('"', '').replace("'", '')
     return ''.join(secrets.choice(characters) for _ in range(length))
 
@@ -427,21 +429,35 @@ SETTINGS_CONTENT = """
             <div class="card p-4">
                 <h5 class="card-title mb-3">Actieve API Sleutels</h5>
                 <p>Deze sleutels worden gebruikt om verkeer te authenticeren en te limiteren.</p>
+                <div class="alert alert-danger small">
+                    <strong>Waarschuwing:</strong> Deze sleutels zijn **niet persistent** en gaan verloren bij het herstarten van de Docker-container.
+                </div>
                 <ul class="list-group">
                     {% for id, data in api_keys.items() %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
+                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center">
                         <div>
                             <strong>{{ data.description }}:</strong> 
                             <span class="text-muted small">({{ id }})</span>
                         </div>
-                        <!-- Sleutel wordt gemaskeerd -->
-                        <code>*** ({{ data.key | length }} tekens)</code> 
+                        
+                        <div class="d-flex align-items-center">
+                             <!-- Sleutel wordt gemaskeerd -->
+                            <code class="me-3">*** ({{ data.key | length }} tekens)</code>
+                            
+                            <!-- Revoke Formulier -->
+                            <form method="POST" action="{{ url_for('settings') }}" onsubmit="return confirm('Weet u zeker dat u sleutel {{ id }} wilt intrekken? Dit is niet omkeerbaar!');">
+                                <input type="hidden" name="action" value="revoke_key">
+                                <input type="hidden" name="client_id" value="{{ id }}">
+                                <button type="submit" class="btn btn-sm btn-danger">
+                                    <i class="bi bi-trash"></i> Intrekken
+                                </button>
+                            </form>
+                        </div>
                     </li>
                     {% else %}
                     <li class="list-group-item bg-transparent text-muted">Geen actieve sleutels. Gebruik de generator.</li>
                     {% endfor %}
                 </ul>
-                <div class="form-text text-muted mt-3">Sleutels worden gemaskeerd voor beveiliging. Nieuwe sleutels worden éénmalig getoond na generatie.</div>
             </div>
         </div>
     </div>
@@ -592,6 +608,16 @@ def settings():
             flash(f'NIEUWE SLEUTEL ({description}): {new_key}. Deze sleutel wordt nu gemaskeerd.', 'success')
             
             # Voorkom herhaling van POST (POST-Redirect-GET)
+            return redirect(url_for('settings'))
+            
+        elif action == 'revoke_key':
+            client_id_to_revoke = request.form.get('client_id')
+            if client_id_to_revoke in API_KEYS:
+                # Verwijder de sleutel uit de dictionary
+                API_KEYS.pop(client_id_to_revoke)
+                flash(f'API-sleutel voor "{client_id_to_revoke}" is succesvol ingetrokken en verwijderd.', 'warning')
+            else:
+                flash(f'Fout: Sleutel voor "{client_id_to_revoke}" niet gevonden.', 'danger')
             return redirect(url_for('settings'))
 
         # Logica voor opslaan/testen database URI
