@@ -2,11 +2,15 @@ import os
 import datetime
 import json
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash
+# Nieuwe import voor CORS-ondersteuning
+from flask_cors import CORS 
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
 
 # --- INITIALISATIE ---
 app = Flask(__name__)
+# Voeg CORS toe: Staat alle origins toe om de API-endpoints te benaderen.
+CORS(app) 
 # Gebruik een veilige sleutel uit de omgeving, anders een standaardwaarde.
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
@@ -23,8 +27,8 @@ def get_db_connection(uri=None):
         return None, "MongoDB URI is niet geconfigureerd."
 
     try:
-        # Lagere timeout voor snelle connectiecheck
-        client = MongoClient(target_uri, serverSelectionTimeoutMS=2000)
+        # VERHOOGD: 2000ms naar 5000ms voor meer tolerantie bij netwerklatentie
+        client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
         # Check of de server beschikbaar is door een commando uit te voeren
         client.admin.command('ping')
         return client, None
