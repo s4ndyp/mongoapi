@@ -565,7 +565,7 @@ def settings():
 
 # --- API Endpoints voor externe Apps ---
 
-@app.route('/api/health', methods=['GET'])
+@app.route('/api/health', methods=['GET']) # <-- Versie verwijderd
 def health_check():
     """Simple health check endpoint."""
     client, error = get_db_connection()
@@ -576,7 +576,7 @@ def health_check():
         "mongodb_status": db_status
     })
 
-@app.route('/api/data', methods=['POST'])
+@app.route('/api/data', methods=['POST']) # <-- Versie verwijderd
 @require_api_key # Feature 1: Vereist een geldige Bearer Token
 @limiter.limit("50 per hour", override_key=get_client_id) # Feature 6: Rate Limiting
 @limiter.limit("200 per day", override_key=get_client_id) # Feature 6: Tweede limiet
