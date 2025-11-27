@@ -10,13 +10,11 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 from flask_limiter import Limiter # Voor Rate Limiting (Feature 6)
 from flask_limiter.util import get_remote_address # Nodig voor Limiter
 
-# --- STATIC API KEYS (Feature 1: Authenticatie & Generatie) ---
-# Format: {client_id: {'key': key_string, 'description': 'Omschrijving'}}
-# LET OP: Deze sleutels zijn NIET persistent bij herstart van de container.
-API_KEYS = {
-    "Webshop_Kassa_1": {"key": "KASSA_SECRET_12345", "description": "Webshop kassa systeem"}, 
-    "Mobiele_App_2": {"key": "MOB_APP_SECRET_67890", "description": "Interne mobiele app voor logs"}
-}
+# --- Globale Configuratie (Feature 5) ---
+DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
+# Globale variabele voor de MongoClient (Connection Pooling)
+MONGO_CLIENT = None
+
 
 # --- Helper voor Key Generatie ---
 def generate_random_key(length=20):
@@ -25,76 +23,73 @@ def generate_random_key(length=20):
     characters = string.ascii_letters + string.digits + string.punctuation.replace('"', '').replace("'", '')
     return ''.join(secrets.choice(characters) for _ in range(length))
 
-# Functie om de client te identificeren voor Rate Limiting (Feature 6)
-def get_client_id():
-    # Probeer de API key (Authorization header) te gebruiken voor Rate Limiting
-    auth_header = request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Bearer '):
-        token = auth_header.split(' ')[1]
-        for client_id, data in API_KEYS.items():
-            if token == data['key']:
-                return client_id
-    # Val terug op IP-adres als er geen geldige token is
-    return get_remote_address()
-
-
-# --- INITIALISATIE ---
-app = Flask(__name__)
-# Voeg CORS toe: Staat alle origins toe om de API-endpoints te benaderen.
-CORS(app) 
-# Initialiseer Limiter (Feature 6: Rate Limiting)
-limiter = Limiter(
-    key_func=get_client_id, # <-- Deze instelling is voldoende!
-    app=app, 
-    default_limits=["200 per day", "50 per hour"], # Standaardlimieten
-    storage_uri="memory://" # Gebruik geheugen voor eenvoud
-)
-
-# Gebruik een veilige sleutel uit de omgeving, anders een standaardwaarde.
-app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
-
-# --- Globale Configuratie ---
-DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
-app.config['MONGO_URI'] = DEFAULT_MONGO_URI
-
 
 # --- Helper Functies ---
 
 def ensure_indexes(db):
-    """Zorgt ervoor dat de benodigde MongoDB-indexen bestaan. (Feature 7)"""
+    """Zorgt ervoor dat de benodigde MongoDB-indexen bestaan en TTL wordt ingesteld. (Feature 7 & 8)"""
     try:
         # Index voor snelle statistieken en client filtering (timestamp en source)
         db['statistics'].create_index([("timestamp", 1), ("source", 1)], name="stats_time_source_index", background=True)
+        
+        # Feature 8: TTL Index voor automatische dataverwijdering na 365 dagen
+        # 365 dagen * 24 uur * 60 min * 60 sec = 31,536,000 seconden
+        db['statistics'].create_index("timestamp", expireAfterSeconds=31536000, name="ttl_365_days", background=True) 
+        
         # Index voor snelle zoekopdrachten op de data
         db['app_data'].create_index([("source_app", 1), ("timestamp", -1)], name="data_source_time_index", background=True)
+        
+        # Feature 1: Indexen voor API Keys
+        db['api_keys'].create_index("key", unique=True, name="key_unique_index", background=True)
+        db['api_keys'].create_index("client_id", unique=True, name="client_id_unique_index", background=True)
+        
         print("MongoDB Indexen gecontroleerd en aangemaakt.")
     except Exception as e:
         print(f"Waarschuwing: Index aanmaken mislukt: {e}")
 
 def get_db_connection(uri=None):
-    """Probeert verbinding te maken met MongoDB en zorgt voor indexen."""
+    """Hergebruikt de globale connectie of maakt deze aan. (Feature 5)"""
+    global MONGO_CLIENT
     target_uri = uri if uri else app.config.get('MONGO_URI')
-    
+
     if not target_uri:
         return None, "MongoDB URI is niet geconfigureerd."
 
+    # Probeer client opnieuw te initialiseren als deze None is (eerste keer of reset)
+    if MONGO_CLIENT is None or uri is not None:
+        try:
+            # Maak een nieuwe connectie
+            client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
+            client.admin.command('ping') # Test verbinding
+            
+            # Update de globale client als dit geen test-URI is
+            if uri is None:
+                MONGO_CLIENT = client
+            else: # Als het een test URI is, gebruik de tijdelijke client voor indexen
+                db = client['api_gateway_db']
+                ensure_indexes(db)
+                return client, None
+            
+            # Zorg voor indexen
+            db = MONGO_CLIENT['api_gateway_db']
+            ensure_indexes(db)
+            
+            return MONGO_CLIENT, None
+        except ConnectionFailure:
+            return None, "Kon geen verbinding maken met de MongoDB-server."
+        except OperationFailure as e:
+            return None, f"Authenticatie of Operationele Fout: {e}"
+        except Exception as e:
+            return None, f"Onbekende fout: {e}"
+            
+    # Gebruik de reeds bestaande globale client
     try:
-        # VERHOOGD: 2000ms naar 5000ms voor meer tolerantie bij netwerklatentie
-        client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
-        # Check of de server beschikbaar is door een commando uit te voeren
-        client.admin.command('ping')
-        
-        # Zorgt voor indexen direct na succesvolle verbinding (Feature 7)
-        db = client['api_gateway_db']
-        ensure_indexes(db)
-        
-        return client, None
-    except ConnectionFailure:
-        return None, "Kon geen verbinding maken met de MongoDB-server."
-    except OperationFailure as e:
-        return None, f"Authenticatie of Operationele Fout: {e}"
+        MONGO_CLIENT.admin.command('ping') # Test of de verbinding nog actief is
+        return MONGO_CLIENT, None
     except Exception as e:
-        return None, f"Onbekende fout: {e}"
+        # Connectie verloren, reset globale client en meld fout
+        MONGO_CLIENT = None
+        return None, f"Verbinding verloren: {e}"
 
 def log_statistic(action, source_app):
     """Logt een actie naar de MongoDB database voor statistieken."""
@@ -109,12 +104,96 @@ def log_statistic(action, source_app):
                 'source': source_app
             })
         except Exception as e:
-            # Print foutmelding, maar laat de API call niet falen
             print(f"Fout bij loggen van statistiek: {e}")
+
+# --- Database Key Management (Feature 1) ---
+
+def load_api_keys():
+    """Laadt alle actieve sleutels uit de database. (Feature 1)"""
+    client, error = get_db_connection()
+    if not client:
+        return {}
+    
+    db = client['api_gateway_db']
+    keys_cursor = db['api_keys'].find({})
+    
+    # Maak een dictionary {client_id: {'key': key, 'description': desc}}
+    keys = {}
+    for doc in keys_cursor:
+        keys[doc['client_id']] = {
+            'key': doc['key'],
+            'description': doc['description']
+        }
+    return keys
+
+def save_new_api_key(client_id, key, description):
+    """Slaat een nieuwe sleutel op in de database. (Feature 1)"""
+    client, error = get_db_connection()
+    if not client:
+        return False, "Database niet verbonden."
+    
+    db = client['api_gateway_db']
+    try:
+        db['api_keys'].insert_one({
+            'client_id': client_id,
+            'key': key,
+            'description': description,
+            'created_at': datetime.datetime.utcnow()
+        })
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def revoke_api_key_db(client_id):
+    """Trekt een sleutel in door deze uit de database te verwijderen. (Feature 1)"""
+    client, error = get_db_connection()
+    if not client:
+        return False, "Database niet verbonden."
+    
+    db = client['api_gateway_db']
+    try:
+        result = db['api_keys'].delete_one({'client_id': client_id})
+        return result.deleted_count > 0, None
+    except Exception as e:
+        return False, str(e)
+
+# --- INITIALISATIE ---
+app = Flask(__name__)
+# Voeg CORS toe: Staat alle origins toe om de API-endpoints te benaderen.
+CORS(app) 
+app.config['MONGO_URI'] = DEFAULT_MONGO_URI # Plaats config hier
+
+# Functie om de client te identificeren voor Rate Limiting (Feature 6)
+def get_client_id():
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        
+        # Zoek in de database naar de token (Feature 1)
+        client, _ = get_db_connection()
+        if client:
+            db = client['api_gateway_db']
+            key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
+            if key_doc:
+                return key_doc['client_id']
+                
+    # Val terug op IP-adres als er geen geldige token is
+    return get_remote_address()
+
+# Initialiseer Limiter (Feature 6: Rate Limiting)
+limiter = Limiter(
+    key_func=get_client_id, 
+    app=app, 
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://" 
+)
+
+# Gebruik een veilige sleutel uit de omgeving, anders een standaardwaarde.
+app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
 # --- Authenticatie Decorator (Feature 1: API Key Validation) ---
 def require_api_key(f):
-    """Decorator om de API Key te valideren."""
+    """Decorator om de API Key te valideren. (Feature 1)"""
     def wrapper(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
         
@@ -123,20 +202,22 @@ def require_api_key(f):
         
         token = auth_header.split(' ')[1]
         
+        # Zoek in de database (Feature 1)
+        client, _ = get_db_connection()
         client_id = None
-        for cid, data in API_KEYS.items(): # Controleer tegen de 'key' waarde in de dictionary
-            if data['key'] == token:
-                client_id = cid
-                break
+        if client:
+            db = client['api_gateway_db']
+            key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
+            if key_doc:
+                client_id = key_doc['client_id']
         
         if client_id:
-            # Sla de client_id op in de request context voor logging/rate limiting
             request.client_id = client_id
             return f(*args, **kwargs)
         else:
             return jsonify({"error": "Ongeldige API-sleutel"}), 401
     
-    wrapper.__name__ = f.__name__ # Nodig voor Flask
+    wrapper.__name__ = f.__name__ 
     return wrapper
 
 # --- HTML TEMPLATES ---
@@ -429,8 +510,8 @@ SETTINGS_CONTENT = """
             <div class="card p-4">
                 <h5 class="card-title mb-3">Actieve API Sleutels</h5>
                 <p>Deze sleutels worden gebruikt om verkeer te authenticeren en te limiteren.</p>
-                <div class="alert alert-danger small">
-                    <strong>Waarschuwing:</strong> Deze sleutels zijn **niet persistent** en gaan verloren bij het herstarten van de Docker-container.
+                <div class="alert alert-info small">
+                    <strong>Opmerking:</strong> Sleutels worden permanent opgeslagen in de MongoDB-database.
                 </div>
                 <ul class="list-group">
                     {% for id, data in api_keys.items() %}
@@ -467,6 +548,7 @@ SETTINGS_CONTENT = """
 
 @app.route('/')
 def dashboard():
+    # Zorgt dat de globale client gecheckt/geïnitialiseerd wordt (Feature 5)
     client, error = get_db_connection()
     db_connected = client is not None
     
@@ -540,8 +622,9 @@ def client_detail(source_app):
     total_requests = 0
     api_key_length = 0
     
-    # Zoek de API key lengte voor weergave
-    api_key_data = API_KEYS.get(source_app)
+    # Zoek de API key lengte voor weergave (Feature 1: Lezen uit DB)
+    api_keys_db = load_api_keys()
+    api_key_data = api_keys_db.get(source_app)
     if api_key_data:
         api_key_length = len(api_key_data['key'])
 
@@ -597,27 +680,33 @@ def settings():
             base_name = description.replace(' ', '_').replace('-', '_').replace('.', '').lower()
             i = 1
             client_id = base_name
-            while client_id in API_KEYS:
+            
+            # Controleer op unieke client ID in de database (Feature 1)
+            keys_db = load_api_keys()
+            while client_id in keys_db:
                 client_id = f"{base_name}_{i}"
                 i += 1
 
-            # Sla de nieuwe sleutel op in de globale dictionary
-            API_KEYS[client_id] = {"key": new_key, "description": description}
+            # Sla de nieuwe sleutel op in de database (Feature 1)
+            success, db_error = save_new_api_key(client_id, new_key, description)
+
+            if success:
+                flash(f'NIEUWE SLEUTEL ({description} - ID: {client_id}): {new_key}. Deze sleutel wordt nu gemaskeerd.', 'success')
+            else:
+                flash(f'Fout bij het genereren van de sleutel: {db_error}', 'danger')
             
-            # Flash de key voor eenmalige weergave
-            flash(f'NIEUWE SLEUTEL ({description}): {new_key}. Deze sleutel wordt nu gemaskeerd.', 'success')
-            
-            # Voorkom herhaling van POST (POST-Redirect-GET)
             return redirect(url_for('settings'))
             
         elif action == 'revoke_key':
             client_id_to_revoke = request.form.get('client_id')
-            if client_id_to_revoke in API_KEYS:
-                # Verwijder de sleutel uit de dictionary
-                API_KEYS.pop(client_id_to_revoke)
+            
+            # Verwijder de sleutel uit de database (Feature 1)
+            success, db_error = revoke_api_key_db(client_id_to_revoke)
+
+            if success:
                 flash(f'API-sleutel voor "{client_id_to_revoke}" is succesvol ingetrokken en verwijderd.', 'warning')
             else:
-                flash(f'Fout: Sleutel voor "{client_id_to_revoke}" niet gevonden.', 'danger')
+                flash(f'Fout bij het intrekken van de sleutel: {db_error}', 'danger')
             return redirect(url_for('settings'))
 
         # Logica voor opslaan/testen database URI
@@ -627,20 +716,29 @@ def settings():
             app.config['MONGO_URI'] = new_uri
         
         if action == 'test':
-            client, error = get_db_connection(app.config['MONGO_URI'])
+            # Gebruik de tijdelijke client (uri is niet None)
+            client, error = get_db_connection(app.config['MONGO_URI']) 
             if client:
                 flash('Verbinding succesvol! Database is bereikbaar.', 'success')
             else:
                 # Toon de gedetailleerde fout in de flash message
                 flash(f'Verbinding mislukt: {error}', 'danger')
         elif action == 'save':
-            flash('Instellingen opgeslagen (sessie). Herstart container voor permanente wijziging.', 'info')
+            # Probeer de globale client bij te werken (Feature 5)
+            client, error = get_db_connection(None) 
+            if client:
+                flash('Instellingen opgeslagen. Globale verbinding bijgewerkt.', 'info')
+            else:
+                flash(f'Instellingen opgeslagen, maar kon geen nieuwe globale verbinding maken: {error}', 'danger')
+            
+    # Laad sleutels uit DB voor weergave (Feature 1)
+    active_api_keys = load_api_keys() 
             
     # Eerst de specifieke inhoud renderen met de benodigde variabelen
     rendered_content = render_template_string(SETTINGS_CONTENT,
                                             current_uri=app.config['MONGO_URI'],
                                             env_host=os.environ.get('HOSTNAME', 'Unknown'),
-                                            api_keys=API_KEYS) # API keys toegevoegd
+                                            api_keys=active_api_keys) # Gebruik de DB-geladen sleutels
     
     # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
@@ -649,7 +747,7 @@ def settings():
 
 # --- API Endpoints voor externe Apps ---
 
-@app.route('/api/health', methods=['GET']) # <-- Versie verwijderd
+@app.route('/api/health', methods=['GET']) 
 def health_check():
     """Simple health check endpoint."""
     client, error = get_db_connection()
@@ -660,10 +758,10 @@ def health_check():
         "mongodb_status": db_status
     })
 
-@app.route('/api/data', methods=['POST']) # <-- Versie verwijderd
+@app.route('/api/data', methods=['POST']) 
 @require_api_key # Feature 1: Vereist een geldige Bearer Token
-@limiter.limit("50 per hour") # FIX: 'override_key=get_client_id' verwijderd
-@limiter.limit("200 per day") # FIX: 'override_key=get_client_id' verwijderd
+@limiter.limit("50 per hour") 
+@limiter.limit("200 per day") 
 def handle_data():
     """
     Endpoint waar clients data naartoe sturen.
@@ -704,5 +802,7 @@ def handle_data():
         return jsonify({"error": f"Failed to write data to database: {str(e)}"}), 500
 
 if __name__ == '__main__':
+    # Initialiseer de globale connectie pool bij het opstarten
+    get_db_connection() 
     # Luister op 0.0.0.0 om bereikbaar te zijn van buiten de container
     app.run(host='0.0.0.0', port=5000, debug=True)
