@@ -3,7 +3,7 @@ import datetime
 import json
 import secrets # Voor API Key authenticatie
 import string # Voor random key generatie
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, abort
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, abort, session # session toegevoegd
 from flask_cors import CORS 
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
@@ -19,8 +19,8 @@ MONGO_CLIENT = None
 # --- Helper voor Key Generatie ---
 def generate_random_key(length=20):
     """Genereert een willekeurige alfanumerieke sleutel van opgegeven lengte."""
-    # Verwijder aanhalingstekens uit de tekenset om JSON-problemen te voorkomen
-    characters = string.ascii_letters + string.digits + string.punctuation.replace('"', '').replace("'", '')
+    # Tekenset: letters, cijfers en !@#$%^&* (zoals gevraagd)
+    characters = string.ascii_letters + string.digits + '!@#$%^&*'
     return ''.join(secrets.choice(characters) for _ in range(length))
 
 
@@ -104,6 +104,7 @@ def log_statistic(action, source_app):
                 'source': source_app
             })
         except Exception as e:
+            # Print foutmelding, maar laat de API call niet falen
             print(f"Fout bij loggen van statistiek: {e}")
 
 # --- Database Key Management (Feature 1) ---
@@ -489,7 +490,7 @@ SETTINGS_CONTENT = """
                 </form>
             </div>
 
-            <!-- Nieuwe Sectie: API Sleutel Generatie -->
+            <!-- Sectie: API Sleutel Generatie -->
             <div class="card p-4 mt-4">
                 <h5 class="card-title mb-3">API Sleutel Generatie</h5>
                 <p class="text-muted small">Genereer een nieuwe, unieke API-sleutel (20 tekens) voor een client. De sleutel wordt **éénmalig** getoond in een melding.</p>
@@ -504,6 +505,40 @@ SETTINGS_CONTENT = """
                     </button>
                 </form>
             </div>
+            
+            <!-- NIEUWE SECTIE: Eénmalige Sleutelweergave -->
+            {% if new_key %}
+            <div class="card p-4 mt-4 border-success">
+                <h5 class="card-title text-success mb-3">Nieuwe Sleutel Succesvol Aangemaakt</h5>
+                <p class="text-muted small">Sleutel voor **{{ new_key_desc }}** (ID: {{ new_key_id }}). Kopieer deze nu, want hij wordt niet meer getoond.</p>
+                
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control bg-dark text-success font-monospace" value="{{ new_key }}" id="generatedKey" readonly>
+                    <button class="btn btn-outline-success" type="button" onclick="copyToClipboard('generatedKey', this)">
+                        <i class="bi bi-clipboard"></i> Kopiëren
+                    </button>
+                </div>
+            </div>
+            <script>
+                // Functie voor Kopiëren naar Klembord (gebruikt document.execCommand)
+                function copyToClipboard(elementId, button) {
+                    var copyText = document.getElementById(elementId);
+                    
+                    // Selecteer de tekst
+                    copyText.select();
+                    copyText.setSelectionRange(0, 99999); // Voor mobiel
+
+                    // Kopieer de tekst
+                    document.execCommand('copy');
+                    
+                    // Visuele feedback
+                    button.innerHTML = '<i class="bi bi-check2"></i> Gekopieerd!';
+                    setTimeout(() => {
+                        button.innerHTML = '<i class="bi bi-clipboard"></i> Kopiëren';
+                    }, 2000);
+                }
+            </script>
+            {% endif %}
         </div>
         
         <div class="col-md-6">
@@ -548,7 +583,6 @@ SETTINGS_CONTENT = """
 
 @app.route('/')
 def dashboard():
-    # Zorgt dat de globale client gecheckt/geïnitialiseerd wordt (Feature 5)
     client, error = get_db_connection()
     db_connected = client is not None
     
@@ -691,7 +725,12 @@ def settings():
             success, db_error = save_new_api_key(client_id, new_key, description)
 
             if success:
-                flash(f'NIEUWE SLEUTEL ({description} - ID: {client_id}): {new_key}. Deze sleutel wordt nu gemaskeerd.', 'success')
+                # Sla de key en description op in de session voor eenmalige weergave
+                session['new_key'] = new_key
+                session['new_key_desc'] = description
+                session['new_key_id'] = client_id
+                
+                flash(f'Sleutel voor "{description}" is gegenereerd en wordt nu éénmalig getoond.', 'success')
             else:
                 flash(f'Fout bij het genereren van de sleutel: {db_error}', 'danger')
             
@@ -733,12 +772,20 @@ def settings():
             
     # Laad sleutels uit DB voor weergave (Feature 1)
     active_api_keys = load_api_keys() 
+    
+    # Haal éénmalige sleutel op uit session (en wis deze)
+    new_key = session.pop('new_key', None)
+    new_key_desc = session.pop('new_key_desc', None)
+    new_key_id = session.pop('new_key_id', None)
             
     # Eerst de specifieke inhoud renderen met de benodigde variabelen
     rendered_content = render_template_string(SETTINGS_CONTENT,
                                             current_uri=app.config['MONGO_URI'],
                                             env_host=os.environ.get('HOSTNAME', 'Unknown'),
-                                            api_keys=active_api_keys) # Gebruik de DB-geladen sleutels
+                                            api_keys=active_api_keys,
+                                            new_key=new_key, # Wordt alleen gerenderd als deze in session stond
+                                            new_key_desc=new_key_desc,
+                                            new_key_id=new_key_id) 
     
     # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
