@@ -1,44 +1,59 @@
 import os
 import datetime
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, session, flash
+import json
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import ConnectionFailure, OperationFailure
 
+# --- INITIALISATIE ---
 app = Flask(__name__)
+# Gebruik een veilige sleutel uit de omgeving, anders een standaardwaarde.
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
-# --- Global Configuration ---
-# In een productieomgeving zou je dit persistent opslaan, maar voor nu in memory/session
-# Standaard MongoDB host binnen een Docker netwerk heet vaak 'mongo'
+# --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI
 
-# --- Helper Functions ---
+# --- Helper Functies ---
 def get_db_connection(uri=None):
     """Probeert verbinding te maken met MongoDB."""
-    target_uri = uri if uri else app.config['MONGO_URI']
+    target_uri = uri if uri else app.config.get('MONGO_URI')
+    
+    if not target_uri:
+        return None, "MongoDB URI is niet geconfigureerd."
+
     try:
+        # Lagere timeout voor snelle connectiecheck
         client = MongoClient(target_uri, serverSelectionTimeoutMS=2000)
-        # Check of de server beschikbaar is
+        # Check of de server beschikbaar is door een commando uit te voeren
         client.admin.command('ping')
         return client, None
+    except ConnectionFailure:
+        return None, "Kon geen verbinding maken met de MongoDB-server."
+    except OperationFailure as e:
+        return None, f"Authenticatie of Operationele Fout: {e}"
     except Exception as e:
-        return None, str(e)
+        return None, f"Onbekende fout: {e}"
 
 def log_statistic(action, source_app):
     """Logt een actie naar de MongoDB database voor statistieken."""
     client, _ = get_db_connection()
     if client:
-        db = client['api_gateway_db']
-        stats = db['statistics']
-        stats.insert_one({
-            'timestamp': datetime.datetime.utcnow(),
-            'action': action,
-            'source': source_app
-        })
+        try:
+            db = client['api_gateway_db']
+            stats = db['statistics']
+            stats.insert_one({
+                'timestamp': datetime.datetime.utcnow(),
+                'action': action,
+                'source': source_app
+            })
+        except Exception as e:
+            # Print foutmelding, maar laat de API call niet falen
+            print(f"Fout bij loggen van statistiek: {e}")
 
-# --- HTML TEMPLATES (Ingebouwd voor eenvoud) ---
+# --- HTML TEMPLATES (Gecorrigeerde Structuur) ---
 
+# De basislayout bevat nu een placeholder voor de specifieke content
 BASE_LAYOUT = """
 <!DOCTYPE html>
 <html lang="nl" data-bs-theme="dark">
@@ -82,7 +97,7 @@ BASE_LAYOUT = """
                 </div>
             </nav>
 
-            <!-- Main Content -->
+            <!-- Main Content: HIER WORDT DE CONTENT GEÏNJECTEERD -->
             <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
                 {% with messages = get_flashed_messages(with_categories=true) %}
                   {% if messages %}
@@ -95,19 +110,56 @@ BASE_LAYOUT = """
                   {% endif %}
                 {% endwith %}
                 
-                {% block content %}{% endblock %}
+                {{ page_content | safe }}
+
             </main>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    {% block scripts %}{% endblock %}
+    {% if page == 'dashboard' %}
+    <script>
+        // Simpele dummy chart data, in het echt zou dit uit de backend komen
+        const ctx = document.getElementById('activityChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00'],
+                datasets: [{
+                    label: 'API Requests',
+                    data: [12, 19, 3, 5, 2, 3],
+                    borderColor: '#0d6efd',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        labels: { color: '#aaa' }
+                    }
+                },
+                scales: {
+                    y: { 
+                        beginAtZero: true, 
+                        grid: { color: '#333' },
+                        ticks: { color: '#aaa' }
+                    },
+                    x: { 
+                        grid: { color: '#333' },
+                        ticks: { color: '#aaa' }
+                    }
+                }
+            }
+        });
+    </script>
+    {% endif %}
 </body>
 </html>
 """
 
-DASHBOARD_HTML = BASE_LAYOUT + """
-{% block content %}
+# Dashboard Content (bevat GEEN base layout of block tags meer)
+DASHBOARD_CONTENT = """
     <h2 class="mb-4">Systeem Status</h2>
     
     <!-- Status Cards -->
@@ -163,36 +215,10 @@ DASHBOARD_HTML = BASE_LAYOUT + """
             </div>
         </div>
     </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-    // Simpele dummy chart data, in het echt zou dit uit de backend komen
-    const ctx = document.getElementById('activityChart').getContext('2d');
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00'],
-            datasets: [{
-                label: 'API Requests',
-                data: [12, 19, 3, 5, 2, 3],
-                borderColor: '#0d6efd',
-                tension: 0.1
-            }]
-        },
-        options: {
-            scales: {
-                y: { beginAtZero: true, grid: { color: '#333' } },
-                x: { grid: { color: '#333' } }
-            }
-        }
-    });
-</script>
-{% endblock %}
 """
 
-SETTINGS_HTML = BASE_LAYOUT + """
-{% block content %}
+# Settings Content (bevat GEEN base layout of block tags meer)
+SETTINGS_CONTENT = """
     <h2 class="mb-4">Instellingen</h2>
     
     <div class="row">
@@ -222,7 +248,6 @@ SETTINGS_HTML = BASE_LAYOUT + """
             </div>
         </div>
     </div>
-{% endblock %}
 """
 
 # --- Routes ---
@@ -241,12 +266,15 @@ def dashboard():
             # Haal statistieken op (bijv. aantal docs in stats collectie)
             stats_count = db['statistics'].count_documents({})
             # Haal unieke 'source' velden op voor client lijst
-            unique_clients = db['statistics'].distinct('source')
+            # Filter op clients die in de afgelopen 24 uur actief waren
+            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
         except Exception:
             pass
             
-    return render_template_string(DASHBOARD_HTML, 
+    return render_template_string(BASE_LAYOUT, 
                                   page='dashboard',
+                                  page_content=DASHBOARD_CONTENT,
                                   db_connected=db_connected,
                                   db_uri=app.config['MONGO_URI'],
                                   stats_count=stats_count,
@@ -259,6 +287,7 @@ def settings():
         new_uri = request.form.get('mongo_uri')
         action = request.form.get('action')
         
+        # Sla de nieuwe URI op in de configuratie
         app.config['MONGO_URI'] = new_uri
         
         if action == 'test':
@@ -266,12 +295,14 @@ def settings():
             if client:
                 flash('Verbinding succesvol! Database is bereikbaar.', 'success')
             else:
+                # Toon de gedetailleerde fout in de flash message
                 flash(f'Verbinding mislukt: {error}', 'danger')
         elif action == 'save':
             flash('Instellingen opgeslagen (sessie). Herstart container voor permanente wijziging.', 'info')
             
-    return render_template_string(SETTINGS_HTML, 
+    return render_template_string(BASE_LAYOUT, 
                                   page='settings', 
+                                  page_content=SETTINGS_CONTENT,
                                   current_uri=app.config['MONGO_URI'],
                                   env_host=os.environ.get('HOSTNAME', 'Unknown'))
 
@@ -280,7 +311,13 @@ def settings():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint."""
-    return jsonify({"status": "running", "service": "API Gateway"})
+    client, error = get_db_connection()
+    db_status = "ok" if client else "error"
+    return jsonify({
+        "status": "running", 
+        "service": "API Gateway",
+        "mongodb_status": db_status
+    })
 
 @app.route('/api/data', methods=['POST'])
 def handle_data():
@@ -288,25 +325,38 @@ def handle_data():
     Endpoint waar clients data naartoe sturen.
     Dit fungeert als proxy naar MongoDB.
     """
-    data = request.json
-    source_app = data.get('source_app', 'unknown_client')
-    payload = data.get('payload')
+    try:
+        data = request.json
+    except Exception:
+        return jsonify({"error": "Invalid JSON payload"}), 400
+        
+    if not data:
+         return jsonify({"error": "Missing JSON data"}), 400
 
+    source_app = data.get('source_app', 'unknown_client')
+    
     client, error = get_db_connection()
     if not client:
-        return jsonify({"error": "Database not connected"}), 503
+        # Als database down is, reageer met 503 Service Unavailable
+        log_statistic('db_failed_request', source_app)
+        return jsonify({"error": "Database not connected", "details": error}), 503
     
     try:
         db = client['api_gateway_db']
-        # Sla de data op
-        db['app_data'].insert_one(data)
+        # Sla de volledige inkomende JSON op
+        db['app_data'].insert_one({
+            'timestamp': datetime.datetime.utcnow(),
+            'source_app': source_app,
+            'payload': data # Sla de volledige payload op
+        })
         
         # Log statistiek
         log_statistic('data_received', source_app)
         
         return jsonify({"status": "success", "message": "Data processed"}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log_statistic('db_write_error', source_app)
+        return jsonify({"error": f"Failed to write data to database: {str(e)}"}), 500
 
 if __name__ == '__main__':
     # Luister op 0.0.0.0 om bereikbaar te zijn van buiten de container
