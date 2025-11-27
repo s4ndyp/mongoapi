@@ -1,16 +1,47 @@
 import os
 import datetime
 import json
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash
-# Nieuwe import voor CORS-ondersteuning
+import secrets # Voor API Key authenticatie
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, abort
 from flask_cors import CORS 
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
+from flask_limiter import Limiter # Voor Rate Limiting (Feature 6)
+from flask_limiter.util import get_remote_address # Nodig voor Limiter
+
+# --- STATIC API KEYS (Feature 1: Authenticatie) ---
+# In een echte app zouden deze uit een database of HashiCorp Vault komen.
+# Gebruik de source_app naam als API key ID.
+API_KEYS = {
+    "Webshop_Kassa_1": "KASSA_SECRET_12345", 
+    "Mobiele_App_2": "MOB_APP_SECRET_67890"
+}
+# Functie om de client te identificeren voor Rate Limiting (Feature 6)
+def get_client_id():
+    # Probeer de API key (Authorization header) te gebruiken voor Rate Limiting
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        for client_id, key in API_KEYS.items():
+            if token == key:
+                return client_id
+    # Val terug op IP-adres als er geen geldige token is
+    return get_remote_address()
+
 
 # --- INITIALISATIE ---
 app = Flask(__name__)
 # Voeg CORS toe: Staat alle origins toe om de API-endpoints te benaderen.
 CORS(app) 
+# Initialiseer Limiter (Feature 6: Rate Limiting)
+# Gebruikt de 'get_client_id' functie om de client te identificeren
+limiter = Limiter(
+    key_func=get_client_id, 
+    app=app, 
+    default_limits=["200 per day", "50 per hour"], # Standaardlimieten
+    storage_uri="memory://" # Gebruik geheugen voor eenvoud
+)
+
 # Gebruik een veilige sleutel uit de omgeving, anders een standaardwaarde.
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
@@ -18,9 +49,22 @@ app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI
 
+
 # --- Helper Functies ---
+
+def ensure_indexes(db):
+    """Zorgt ervoor dat de benodigde MongoDB-indexen bestaan. (Feature 7)"""
+    try:
+        # Index voor snelle statistieken en client filtering (timestamp en source)
+        db['statistics'].create_index([("timestamp", 1), ("source", 1)], name="stats_time_source_index", background=True)
+        # Index voor snelle zoekopdrachten op de data
+        db['app_data'].create_index([("source_app", 1), ("timestamp", -1)], name="data_source_time_index", background=True)
+        print("MongoDB Indexen gecontroleerd en aangemaakt.")
+    except Exception as e:
+        print(f"Waarschuwing: Index aanmaken mislukt: {e}")
+
 def get_db_connection(uri=None):
-    """Probeert verbinding te maken met MongoDB."""
+    """Probeert verbinding te maken met MongoDB en zorgt voor indexen."""
     target_uri = uri if uri else app.config.get('MONGO_URI')
     
     if not target_uri:
@@ -31,6 +75,11 @@ def get_db_connection(uri=None):
         client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
         # Check of de server beschikbaar is door een commando uit te voeren
         client.admin.command('ping')
+        
+        # Zorgt voor indexen direct na succesvolle verbinding (Feature 7)
+        db = client['api_gateway_db']
+        ensure_indexes(db)
+        
         return client, None
     except ConnectionFailure:
         return None, "Kon geen verbinding maken met de MongoDB-server."
@@ -55,7 +104,31 @@ def log_statistic(action, source_app):
             # Print foutmelding, maar laat de API call niet falen
             print(f"Fout bij loggen van statistiek: {e}")
 
-# --- HTML TEMPLATES (Gecorrigeerde Structuur) ---
+# --- Authenticatie Decorator (Feature 1: API Key Validation) ---
+def require_api_key(f):
+    """Decorator om de API Key te valideren."""
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Authenticatie vereist. Gebruik 'Authorization: Bearer <key>'"}), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # Zoek de client_id die overeenkomt met de token
+        client_id = next((c for c, key in API_KEYS.items() if key == token), None)
+        
+        if client_id:
+            # Sla de client_id op in de request context voor logging/rate limiting
+            request.client_id = client_id
+            return f(*args, **kwargs)
+        else:
+            return jsonify({"error": "Ongeldige API-sleutel"}), 401
+    
+    wrapper.__name__ = f.__name__ # Nodig voor Flask
+    return wrapper
+
+# --- HTML TEMPLATES ---
 
 # De basislayout bevat nu een placeholder voor de specifieke content
 BASE_LAYOUT = """
@@ -76,6 +149,7 @@ BASE_LAYOUT = """
         .status-dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .dot-green { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
+        .log-timestamp { white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -121,48 +195,73 @@ BASE_LAYOUT = """
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    {% if page == 'dashboard' %}
+    
+    <!-- Feature 10: Tijdzone Conversie -->
     <script>
-        // Simpele dummy chart data, in het echt zou dit uit de backend komen
+        function convertUtcToLocal() {
+            document.querySelectorAll('.utc-timestamp').forEach(element => {
+                const utcTime = element.dataset.utc;
+                if (utcTime) {
+                    const date = new Date(utcTime + 'Z'); // Z (Zulu) geeft aan dat het UTC is
+                    // Controleer of de conversie geldig is voordat deze wordt weergegeven
+                    if (!isNaN(date)) {
+                        element.textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                    } else {
+                         element.textContent = 'Ongeldige tijd';
+                    }
+                    element.classList.remove('utc-timestamp'); // Voorkom dubbele conversie
+                }
+            });
+        }
+
+        // Zorg ervoor dat de functie wordt uitgevoerd wanneer de DOM geladen is
+        convertUtcToLocal();
+
+        {% if page == 'dashboard' %}
+        // Feature 4: Real-time Dashboard Statistieken (Chart.js)
+        // De JSON data wordt hier uit de verborgen script tag geladen
+        const chartData = JSON.parse(document.getElementById('chart-data').textContent);
+        
         const ctx = document.getElementById('activityChart').getContext('2d');
         new Chart(ctx, {
-            type: 'line',
+            type: 'bar',
             data: {
-                labels: ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00'],
+                labels: chartData.labels,
                 datasets: [{
-                    label: 'API Requests',
-                    data: [12, 19, 3, 5, 2, 3],
+                    label: 'API Requests per Uur',
+                    data: chartData.counts,
+                    backgroundColor: 'rgba(13, 110, 253, 0.6)',
                     borderColor: '#0d6efd',
-                    tension: 0.1
+                    borderWidth: 1
                 }]
             },
             options: {
                 responsive: true,
-                plugins: {
-                    legend: {
-                        labels: { color: '#aaa' }
-                    }
-                },
                 scales: {
                     y: { 
                         beginAtZero: true, 
                         grid: { color: '#333' },
-                        ticks: { color: '#aaa' }
+                        ticks: { color: '#aaa', precision: 0 }
                     },
                     x: { 
                         grid: { color: '#333' },
                         ticks: { color: '#aaa' }
                     }
+                },
+                plugins: {
+                    legend: {
+                        labels: { color: '#aaa' }
+                    }
                 }
             }
         });
+        {% endif %}
     </script>
-    {% endif %}
 </body>
 </html>
 """
 
-# Dashboard Content (bevat GEEN base layout of block tags meer)
+# Dashboard Content 
 DASHBOARD_CONTENT = """
     <h2 class="mb-4">Systeem Status</h2>
     
@@ -199,17 +298,24 @@ DASHBOARD_CONTENT = """
     <div class="row">
         <div class="col-md-8">
             <div class="card p-3">
-                <h5 class="card-title">Recente Activiteit</h5>
+                <h5 class="card-title">Recente Activiteit (Laatste 6 uur)</h5>
+                <!-- Feature 4: Verborgen JSON data voor de Chart -->
+                <script id="chart-data" type="application/json">
+                    {{ chart_data | tojson | safe }}
+                </script>
                 <canvas id="activityChart" height="100"></canvas>
             </div>
         </div>
         <div class="col-md-4">
             <div class="card p-3">
-                <h5 class="card-title">Geregistreerde Clients</h5>
+                <h5 class="card-title">Geregistreerde Clients (24u)</h5>
                 <ul class="list-group list-group-flush mt-3">
                     {% for client in clients %}
                     <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center">
-                        {{ client }}
+                        <!-- Feature 9: Link naar detail view -->
+                        <a href="{{ url_for('client_detail', source_app=client) }}" class="text-decoration-none text-info hover:text-white">
+                            {{ client }}
+                        </a>
                         <span class="badge bg-primary rounded-pill">Actief</span>
                     </li>
                     {% else %}
@@ -221,7 +327,55 @@ DASHBOARD_CONTENT = """
     </div>
 """
 
-# Settings Content (bevat GEEN base layout of block tags meer)
+# Client Detail Content (Feature 9)
+CLIENT_DETAIL_CONTENT = """
+    <h2 class="mb-4">Client Detail: <span class="text-info">{{ source_app }}</span></h2>
+    <a href="/" class="btn btn-sm btn-secondary mb-4"><i class="bi bi-arrow-left"></i> Terug naar Dashboard</a>
+
+    <!-- Client Info Card -->
+    <div class="card p-4 mb-4">
+        <h5 class="card-title mb-3">Client Informatie</h5>
+        <p><strong>Laatste 24u Requests:</strong> <span class="badge bg-primary">{{ total_requests }}</span></p>
+        <p><strong>Toegestane API Sleutel:</strong> 
+            {% if api_key != 'N/A' %}
+                <span class="badge bg-success">{{ api_key }}</span>
+            {% else %}
+                <span class="badge bg-danger">Geen sleutel gevonden</span>
+            {% endif %}
+        </p>
+        <p><strong>Rate Limit:</strong> 50 per uur / 200 per dag (Feature 6)</p>
+    </div>
+
+    <!-- Latest Data Logs -->
+    <div class="card p-4">
+        <h5 class="card-title mb-3">Laatste 10 Data Posts</h5>
+        
+        <table class="table table-dark table-striped table-hover">
+            <thead>
+                <tr>
+                    <th scope="col">Tijdstempel (Lokaal)</th>
+                    <th scope="col">Actie</th>
+                    <th scope="col">Payload Fragment</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td class="log-timestamp utc-timestamp" data-utc="{{ log.timestamp }}"></td>
+                    <td>{{ log.action }}</td>
+                    <td><pre class="m-0 p-0 bg-transparent text-white small">{{ log.payload }}</pre></td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="3" class="text-center text-muted">Geen recente logboeken gevonden voor deze client.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+"""
+
+# Settings Content
 SETTINGS_CONTENT = """
     <h2 class="mb-4">Instellingen</h2>
     
@@ -246,9 +400,16 @@ SETTINGS_CONTENT = """
         
         <div class="col-md-6">
             <div class="card p-4">
-                <h5 class="card-title mb-3">Debug Informatie</h5>
-                <p>Environment Variables:</p>
-                <pre class="bg-dark p-2 border border-secondary rounded">HOSTNAME: {{ env_host }}</pre>
+                <h5 class="card-title mb-3">API Sleutels</h5>
+                <p>Ondersteunde API Sleutels voor authenticatie:</p>
+                <ul class="list-group">
+                    {% for id, key in api_keys.items() %}
+                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
+                        <strong>{{ id }}:</strong> <code>{{ key }}</code>
+                    </li>
+                    {% endfor %}
+                </ul>
+                <div class="form-text text-muted mt-3">Gebruik deze sleutels in de 'Authorization: Bearer' header.</div>
             </div>
         </div>
     </div>
@@ -263,16 +424,48 @@ def dashboard():
     
     stats_count = 0
     unique_clients = []
+    chart_data = {"labels": [], "counts": []}
 
     if db_connected:
         try:
             db = client['api_gateway_db']
-            # Haal statistieken op (bijv. aantal docs in stats collectie)
-            stats_count = db['statistics'].count_documents({})
-            # Haal unieke 'source' velden op voor client lijst
-            # Filter op clients die in de afgelopen 24 uur actief waren
+            
+            # --- Berekeningen voor Dashboard ---
             yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            
+            # Totaal Requests (24u)
+            stats_count = db['statistics'].count_documents({'timestamp': {'$gte': yesterday}})
+            
+            # Actieve Clients
             unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
+            
+            # Feature 4: Data voor Grafiek (Requests per uur over de laatste 6 uur)
+            pipeline = [
+                {'$match': {'timestamp': {'$gte': datetime.datetime.utcnow() - datetime.timedelta(hours=6)}}},
+                {'$group': {
+                    '_id': {'$hour': '$timestamp'}, 
+                    'count': {'$sum': 1},
+                    'latest_time': {'$max': '$timestamp'}
+                }},
+                {'$sort': {'latest_time': 1}}
+            ]
+            hourly_counts = list(db['statistics'].aggregate(pipeline))
+
+            # Bereid de grafiekdata voor de laatste 6 uur voor
+            chart_labels = []
+            chart_counts = []
+            now = datetime.datetime.utcnow()
+            for i in range(6):
+                hour_ago = now - datetime.timedelta(hours=6 - i)
+                hour_label = hour_ago.strftime('%H:00')
+                chart_labels.append(hour_label)
+                
+                # Zoek de telling voor dit uur
+                found_count = next((item['count'] for item in hourly_counts if item['_id'] == hour_ago.hour), 0)
+                chart_counts.append(found_count)
+            
+            chart_data = {"labels": chart_labels, "counts": chart_counts}
+            
         except Exception:
             pass
     
@@ -282,12 +475,63 @@ def dashboard():
                                             db_uri=app.config['MONGO_URI'],
                                             stats_count=stats_count,
                                             client_count=len(unique_clients),
-                                            clients=unique_clients)
+                                            clients=unique_clients,
+                                            chart_data=chart_data) # Feature 4: Chart data toegevoegd
             
     # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
                                   page='dashboard',
                                   page_content=rendered_content)
+
+
+@app.route('/client/<source_app>')
+def client_detail(source_app):
+    """Toont gedetailleerde logboeken voor een specifieke client. (Feature 9)"""
+    client, error = get_db_connection()
+    logs = []
+    total_requests = 0
+    
+    # Zoek de API key voor weergave
+    api_key = API_KEYS.get(source_app, "N/A")
+
+    if client:
+        try:
+            db = client['api_gateway_db']
+            
+            # Totaal requests (24u)
+            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            total_requests = db['statistics'].count_documents({
+                'source': source_app,
+                'timestamp': {'$gte': yesterday}
+            })
+            
+            # Haal de laatste 10 logs op van de app_data collectie
+            cursor = db['app_data'].find({'source_app': source_app}).sort('timestamp', -1).limit(10)
+            
+            for doc in cursor:
+                # Beperk de payload voor overzichtelijkheid
+                payload_str = json.dumps(doc.get('payload', {}), indent=2)
+                if len(payload_str) > 100:
+                    payload_str = payload_str[:100] + '...'
+                    
+                logs.append({
+                    'timestamp': doc['timestamp'].isoformat(), # Feature 10: Tijdstempel als ISO string voor JS
+                    'action': 'Data Post',
+                    'payload': payload_str
+                })
+        except Exception as e:
+            flash(f'Fout bij het ophalen van clientdetails: {e}', 'danger')
+
+    rendered_content = render_template_string(CLIENT_DETAIL_CONTENT,
+                                            source_app=source_app,
+                                            total_requests=total_requests,
+                                            api_key=api_key,
+                                            logs=logs)
+    
+    return render_template_string(BASE_LAYOUT, 
+                                  page='client_detail', 
+                                  page_content=rendered_content)
+
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
@@ -311,7 +555,8 @@ def settings():
     # Eerst de specifieke inhoud renderen met de benodigde variabelen
     rendered_content = render_template_string(SETTINGS_CONTENT,
                                             current_uri=app.config['MONGO_URI'],
-                                            env_host=os.environ.get('HOSTNAME', 'Unknown'))
+                                            env_host=os.environ.get('HOSTNAME', 'Unknown'),
+                                            api_keys=API_KEYS) # API keys toegevoegd
     
     # Vervolgens de basislayout renderen, inclusief de zojuist gerenderde inhoud
     return render_template_string(BASE_LAYOUT, 
@@ -332,6 +577,9 @@ def health_check():
     })
 
 @app.route('/api/data', methods=['POST'])
+@require_api_key # Feature 1: Vereist een geldige Bearer Token
+@limiter.limit("50 per hour", override_key=get_client_id) # Feature 6: Rate Limiting
+@limiter.limit("200 per day", override_key=get_client_id) # Feature 6: Tweede limiet
 def handle_data():
     """
     Endpoint waar clients data naartoe sturen.
@@ -345,7 +593,8 @@ def handle_data():
     if not data:
          return jsonify({"error": "Missing JSON data"}), 400
 
-    source_app = data.get('source_app', 'unknown_client')
+    # Gebruik de gevalideerde client ID uit de request context
+    source_app = getattr(request, 'client_id', 'unknown_client')
     
     client, error = get_db_connection()
     if not client:
@@ -365,7 +614,7 @@ def handle_data():
         # Log statistiek
         log_statistic('data_received', source_app)
         
-        return jsonify({"status": "success", "message": "Data processed"}), 201
+        return jsonify({"status": "success", "message": "Data processed", "client": source_app}), 201
     except Exception as e:
         log_statistic('db_write_error', source_app)
         return jsonify({"error": f"Failed to write data to database: {str(e)}"}), 500
