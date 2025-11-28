@@ -98,24 +98,55 @@ def log_statistic(action, source_app, endpoint="default"):
 # --- Endpoint Management Functies ---
 def get_configured_endpoints():
     client, _ = get_db_connection()
-    if not client: return []
-    return list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}).sort('name', 1))
+    endpoints = []
+    
+    # 1. Voeg het standaard systeem endpoint toe (Legacy support)
+    endpoints.append({
+        'name': 'data',
+        'description': 'Standaard Endpoint (Legacy / app_data)',
+        'system': True,  # Vlag om aan te geven dat dit een systeem endpoint is
+        'created_at': datetime.datetime.min # Altijd bovenaan bij sorteren
+    })
+
+    if client:
+        # 2. Voeg dynamische endpoints uit DB toe
+        try:
+            db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}).sort('name', 1))
+            for ep in db_endpoints:
+                # Voeg alleen toe als de naam niet 'data' is (om dubbelingen te voorkomen)
+                if ep.get('name') != 'data':
+                    ep['system'] = False
+                    endpoints.append(ep)
+        except Exception as e:
+            print(f"Fout bij ophalen endpoints: {e}")
+            
+    return endpoints
 
 def get_endpoint_stats(endpoint_name):
     client, _ = get_db_connection()
     if not client: return {'count': 0, 'size': '0 KB'}
+    
+    # Slimme selectie van collectienaam:
+    # 'data' -> 'app_data' (legacy collectie)
+    # andere -> 'data_<naam>' (nieuwe structuur)
+    coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
+    
     try:
-        stats = client['api_gateway_db'].command("collstats", f"data_{endpoint_name}")
+        stats = client['api_gateway_db'].command("collstats", coll_name)
         return {
             'count': stats.get('count', 0),
             'size': format_size(stats.get('storageSize', 0))
         }
     except:
+        # Collectie bestaat waarschijnlijk nog niet
         return {'count': 0, 'size': '0 KB'}
 
 def create_endpoint(name, description):
     if not re.match("^[a-zA-Z0-9_]+$", name):
         return False, "Naam mag alleen letters, cijfers en underscores bevatten."
+    if name == 'data':
+        return False, "De naam 'data' is gereserveerd voor het systeem."
+        
     client, _ = get_db_connection()
     if not client: return False, "No DB"
     try:
@@ -129,6 +160,8 @@ def create_endpoint(name, description):
     except Exception as e: return False, str(e)
 
 def delete_endpoint(name):
+    if name == 'data': return False # Beveiliging tegen verwijderen systeem endpoint
+    
     client, _ = get_db_connection()
     if not client: return False
     try:
@@ -230,7 +263,7 @@ BASE_LAYOUT = """
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
                 </ul>
                 <div class="mt-auto pt-4 border-top border-secondary small text-muted">
-                    Versie 2.0 (Dynamic)
+                    Versie 2.1 (Dynamic + Legacy)
                 </div>
             </nav>
             <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
@@ -357,13 +390,18 @@ ENDPOINTS_CONTENT = """
     <div class="row">
         {% for ep in endpoints %}
         <div class="col-md-6 col-xl-4">
-            <div class="card h-100">
+            <div class="card h-100 {{ 'border-info' if ep.system else '' }}">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="m-0 font-monospace text-info">/api/{{ ep.name }}</h5>
+                    <h5 class="m-0 font-monospace {{ 'text-info' if ep.system else 'text-white' }}">
+                        /api/{{ ep.name }} 
+                        {% if ep.system %}<i class="bi bi-shield-lock-fill small ms-1" title="Systeem Endpoint"></i>{% endif %}
+                    </h5>
+                    {% if not ep.system %}
                     <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert alle data in {{ ep.name }}. Doorgaan?');">
                         <input type="hidden" name="name" value="{{ ep.name }}">
                         <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                     </form>
+                    {% endif %}
                 </div>
                 <div class="card-body">
                     <p class="text-muted small">{{ ep.description }}</p>
@@ -382,8 +420,7 @@ ENDPOINTS_CONTENT = """
         </div>
         {% else %}
         <div class="col-12 text-center text-muted py-5">
-            <h4>Geen endpoints.</h4>
-            <p>Maak er een aan om te beginnen.</p>
+            <h4>Geen endpoints gevonden.</h4>
         </div>
         {% endfor %}
     </div>
@@ -402,8 +439,9 @@ ENDPOINTS_CONTENT = """
                             <label class="form-label">Naam (URL pad)</label>
                             <div class="input-group">
                                 <span class="input-group-text bg-secondary text-white">/api/</span>
-                                <input type="text" name="name" class="form-control bg-black text-white" required pattern="[a-zA-Z0-9_]+">
+                                <input type="text" name="name" class="form-control bg-black text-white" required pattern="[a-zA-Z0-9_]+" placeholder="products">
                             </div>
+                            <div class="form-text text-muted">Gereserveerd: 'data'</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Omschrijving</label>
@@ -532,7 +570,9 @@ def dashboard():
             endpoints = get_configured_endpoints()
             for ep in endpoints:
                  try: 
-                    s = db.command("collstats", f"data_{ep['name']}")
+                    # Correcte collectie naam ophalen
+                    coll_name = 'app_data' if ep['name'] == 'data' else f"data_{ep['name']}"
+                    s = db.command("collstats", coll_name)
                     total_size += s.get('storageSize', 0)
                  except: pass
 
