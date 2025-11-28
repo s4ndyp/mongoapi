@@ -412,7 +412,7 @@ BASE_LAYOUT = """
                 {% with messages = get_flashed_messages(with_categories=true) %}
                   {% if messages %}
                     {% for category, message in messages %}
-                      <div class="alert alert-{{ category }} alert-dismissible fade show">{{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+                      <div class="alert alert-{{ category }} alert-dismissible fade show">{{ message | safe }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
                     {% endfor %}
                   {% endif %}
                 {% endwith %}
@@ -450,7 +450,7 @@ BASE_LAYOUT = """
             try {
                 const successful = document.execCommand('copy');
                 if (successful) {
-                    showNotification('API Key gekopieerd!', 'success');
+                    showNotification('Token gekopieerd!', 'success'); // Aangepast naar Token
                 } else {
                     showNotification('Kopiëren mislukt. Probeer handmatig te selecteren.', 'danger');
                 }
@@ -470,6 +470,14 @@ BASE_LAYOUT = """
                     }
                 }
             });
+            
+            // JWT Flash Message Kopieer Listener
+            const jwtCopyButton = document.getElementById('jwt-copy-button');
+            if (jwtCopyButton) {
+                jwtCopyButton.addEventListener('click', () => {
+                    copyKey('jwt-token-input');
+                });
+            }
         });
     </script>
     {% if page == 'dashboard' %}
@@ -949,21 +957,39 @@ def settings():
             username = request.form.get('username')
             password = request.form.get('password')
             
-            # CORRECTIE: Vergelijk de PyMongo database object met None
             if db is None:
                 flash("Fout: Geen DB verbinding.", "danger")
             elif not username or not password:
                 flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
             else:
                 try:
-                    # Hash en opslaan
-                    db['users'].insert_one({
+                    # 1. Gebruiker aanmaken
+                    result = db['users'].insert_one({
                         'username': username,
                         'password_hash': hash_password(password),
                         'created_at': datetime.datetime.utcnow(),
                         'role': 'admin' # Standaardrol voor dashboard users
                     })
-                    flash(f"Gebruiker '{username}' succesvol aangemaakt.", "success")
+                    
+                    # 2. JWT genereren voor de nieuwe gebruiker
+                    new_user_id = result.inserted_id
+                    new_token = encode_auth_token(new_user_id)
+                    
+                    # 3. HTML fragment genereren om de token te tonen en te kopiëren
+                    token_html = f"""
+                    <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
+                    <div class="input-group">
+                        <input type="text" class="form-control bg-dark text-warning small font-monospace" readonly 
+                            value="{new_token}" id="jwt-token-input">
+                        <button type="button" class="btn btn-warning" id="jwt-copy-button" title="Kopieer JWT">
+                            <i class="bi bi-clipboard"></i> Kopieer Token
+                        </button>
+                    </div>
+                    <p class="mt-2 small text-muted">Dit token is 24 uur geldig. Gebruik het als 'Bearer Token' in de API Test Client.</p>
+                    """
+                    
+                    flash(token_html, "success")
+                
                 except OperationFailure as e:
                     if "E11000 duplicate key" in str(e):
                         flash(f"Fout: Gebruikersnaam '{username}' bestaat al.", "danger")
