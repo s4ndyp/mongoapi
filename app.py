@@ -388,6 +388,13 @@ BASE_LAYOUT = """
         .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
         .log-timestamp { font-family: monospace; color: #88c0d0; }
         .fixed-top { position: fixed; top: 0; }
+        /* FIX VOOR LANGE JWT IN FLASH MESSAGE */
+        .jwt-input-fix {
+             width: 100%;
+             word-wrap: break-word; /* Kan helpen in sommige browsers */
+             min-width: 0; /* Belangrijk voor flex containers */
+             height: auto; /* Zodat het invoerveld kan groeien */
+        }
     </style>
 </head>
 <body>
@@ -976,12 +983,13 @@ def settings():
                     new_token = encode_auth_token(new_user_id)
                     
                     # 3. HTML fragment genereren om de token te tonen en te kopiëren
+                    # FIX: Gebruik d-flex en een breder input veld om de volledige token te garanderen.
                     token_html = f"""
                     <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
-                    <div class="input-group">
-                        <input type="text" class="form-control bg-dark text-warning small font-monospace" readonly 
+                    <div class="d-flex align-items-center">
+                        <input type="text" class="form-control bg-dark text-warning small font-monospace jwt-input-fix" readonly 
                             value="{new_token}" id="jwt-token-input">
-                        <button type="button" class="btn btn-warning" id="jwt-copy-button" title="Kopieer JWT">
+                        <button type="button" class="btn btn-warning ms-2 flex-shrink-0" id="jwt-copy-button" title="Kopieer JWT">
                             <i class="bi bi-clipboard"></i> Kopieer Token
                         </button>
                     </div>
