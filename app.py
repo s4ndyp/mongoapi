@@ -387,9 +387,14 @@ BASE_LAYOUT = """
         .dot-green { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
         .log-timestamp { font-family: monospace; color: #88c0d0; }
+        .fixed-top { position: fixed; top: 0; }
     </style>
 </head>
 <body>
+    <!-- Notificatie/Toast element voor kopieren -->
+    <div id="dashboard-notification" class="alert alert-success d-none fixed-top mt-3 mx-auto shadow-lg" 
+        style="width: 300px; z-index: 1050; text-align: center;"></div>
+
     <div class="container-fluid">
         <div class="row">
             <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse p-3">
@@ -418,6 +423,42 @@ BASE_LAYOUT = """
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
+        // Functie voor notificaties
+        function showNotification(message, type = 'success') {
+            const notif = document.getElementById('dashboard-notification');
+            // Zorg ervoor dat het element bestaat
+            if (!notif) return;
+
+            notif.className = `alert alert-${type} fixed-top mt-3 mx-auto shadow-lg`;
+            notif.style.display = 'block';
+            notif.innerHTML = message;
+            setTimeout(() => {
+                notif.style.display = 'none';
+            }, 3000);
+        }
+
+        // Functie voor kopiëren naar klembord
+        function copyKey(elementId) {
+            const inputElement = document.getElementById(elementId);
+            if (!inputElement) return;
+            
+            // Selecteer de tekst
+            inputElement.select();
+            inputElement.setSelectionRange(0, 99999); 
+            
+            // Kopieer de tekst via de fallback methode
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showNotification('API Key gekopieerd!', 'success');
+                } else {
+                    showNotification('Kopiëren mislukt. Probeer handmatig te selecteren.', 'danger');
+                }
+            } catch (err) {
+                 showNotification('Kopiëren mislukt wegens fout.', 'danger');
+            }
+        }
+        
         // Tijdzone conversie script
         document.addEventListener("DOMContentLoaded", function() {
             document.querySelectorAll('.utc-timestamp').forEach(element => {
@@ -714,12 +755,22 @@ SETTINGS_CONTENT = """
                 <h5>Actieve API Sleutels (Legacy)</h5>
                 <ul class="list-group list-group-flush">
                     {% for id, data in api_keys.items() %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <div>{{ data.description }} <small class="text-muted">({{ id }})</small></div>
+                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-start">
+                        <div class="me-3 flex-grow-1">
+                            <div>{{ data.description }} <small class="text-muted">({{ id }})</small></div>
+                            <div class="input-group input-group-sm mt-1">
+                                <input type="text" class="form-control bg-dark text-warning small font-monospace" readonly 
+                                    value="{{ data.key }}" id="key-{{ id }}">
+                                <button type="button" class="btn btn-outline-info" 
+                                        onclick="copyKey('key-{{ id }}')" title="Kopieer Key">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </div>
                         <form method="POST" action="/settings" onsubmit="return confirm('Intrekken?');">
                             <input type="hidden" name="action" value="revoke_key">
                             <input type="hidden" name="client_id" value="{{ id }}">
-                            <button class="btn btn-sm btn-danger">X</button>
+                            <button class="btn btn-sm btn-danger ms-2" title="Trek in">X</button>
                         </form>
                     </li>
                     {% endfor %}
@@ -972,29 +1023,17 @@ def handle_dynamic_endpoint(endpoint_name):
         if not data: return jsonify({"error": "No JSON"}), 400
         
         # --- FIX VOOR OPSLAAN VAN CLIENT DATA ---
-        # De client stuurt de volledige data payload. We slaan deze op als root document
-        # en voegen de meta-informatie toe, inclusief een dummy ID als de client die al stuurde.
         
         # Voeg meta-informatie toe
         data['meta'] = {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
-        
-        # Verwijder een eventuele client-side 'id' of '_id' zodat MongoDB zijn eigen _id aanmaakt
-        # Client gebruikt 'id' of 'client_id' in de payload die in het document terecht komen.
-        # MongoDB voegt de '_id' toe bij insert.
         
         try:
             result = collection.insert_one(data)
             log_statistic("post_data", client_id, endpoint_name)
             
             # Stuur het opgeslagen document terug, inclusief de nieuwe MongoDB _id
-            # Dit is nodig voor de client om het item te bewerken
             saved_doc = collection.find_one({'_id': result.inserted_id})
 
-            # Formatteer de respons zoals de client verwacht: {id: 'mongo_id', data: {..client_data..}}
-            # We moeten de client-data (alle velden BEHALVE _id en id) en de MongoDB _id terugsturen.
-            
-            # De nieuwe structuur is nu dat de client-data HET DOCUMENT is.
-            # We sturen het document terug met een hernoemde '_id' naar 'id'.
             if saved_doc:
                 saved_doc['id'] = str(saved_doc['_id'])
                 del saved_doc['_id']
@@ -1025,8 +1064,7 @@ def handle_dynamic_endpoint(endpoint_name):
         for d in docs:
             d['id'] = str(d['_id'])
             del d['_id']
-            # Stuur het document terug in de client-formaat {id: 'mongo_id', data: {...document...}}
-            # Zodat de client de structuur herkent.
+            # Stuur het document terug in het client-formaat {id: 'mongo_id', data: {...document...}}
             result_docs.append({
                 "id": d['id'],
                 "data": d # Het volledige document
@@ -1083,9 +1121,6 @@ def handle_single_document(endpoint_name, doc_id):
         if not data: return jsonify({"error": "No JSON"}), 400
         
         # --- FIX VOOR UPDATEN VAN CLIENT DATA ---
-        # De client stuurt de volledige, bijgewerkte payload (Taskey structuur).
-        # We moeten de MongoDB '_id' behouden. We verwijderen 'id' en '_id'
-        # uit de payload voordat we deze gebruiken als $set.
         
         update_doc = data.copy()
         if 'id' in update_doc: del update_doc['id'] # Client stuurt dit mee
@@ -1098,8 +1133,6 @@ def handle_single_document(endpoint_name, doc_id):
         update_doc['meta']['client_id'] = client_id # Update of zet de client_id
 
         # Bij een PUT-operatie wordt het hele document vervangen, behalve _id.
-        # We gebruiken $set op de root van het document.
-        # We updaten nu het hele document, behalve de _id.
         result = collection.update_one({'_id': oid}, {'$set': update_doc})
         
         if result.matched_count == 0:
