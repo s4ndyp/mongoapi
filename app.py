@@ -7,12 +7,12 @@ import re
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
 from flask_cors import CORS 
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
+from pymongo.errors import ConnectionFailure, OperationFailure, OperationFailure
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from bson import ObjectId
 
-# NIEUWE IMPORTS voor JWT en hashing
+# IMPORTS voor JWT en hashing
 import jwt 
 from bcrypt import hashpw, gensalt, checkpw
 
@@ -24,14 +24,9 @@ CORS(app)
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
-# NIEUWE CONFIGURATIE VOOR JWT
+# CONFIGURATIE VOOR JWT
 app.config['JWT_SECRET'] = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
 app.config['JWT_EXPIRY_MINUTES'] = 60 * 24 # Token verloopt na 24 uur
-
-# --- Helper: Random Key ---
-def generate_random_key(length=20):
-    characters = string.ascii_letters + string.digits + '!@#$%^&*'
-    return ''.join(secrets.choice(characters) for _ in range(length))
 
 # --- Helper: Wachtwoord Hashing ---
 def hash_password(password):
@@ -93,7 +88,7 @@ def ensure_indexes(db):
         # Index voor dynamische endpoints configuratie
         db['endpoints'].create_index("name", unique=True, background=True)
         
-        # NIEUW: Index voor gebruikers (voor JWT login)
+        # Index voor gebruikers (voor JWT login)
         db['users'].create_index("username", unique=True, background=True)
         
         print("MongoDB Indexen gecontroleerd.")
@@ -142,6 +137,7 @@ def log_statistic(action, source_app, endpoint="default"):
             print(f"Log error: {e}")
 
 # --- Endpoint Management Functies ---
+# ... (rest van de Endpoint Management Functies blijven ongewijzigd) ...
 def get_configured_endpoints():
     client, _ = get_db_connection()
     endpoints = []
@@ -211,7 +207,8 @@ def load_api_keys():
         keys[doc['client_id']] = {'key': doc['key'], 'description': doc['description']}
     return keys
 
-def save_new_api_key(client_id, key, description):
+# Let op: Deze functie wordt niet meer gebruikt voor de UI (generate_key is weg) maar blijft om API Keys te kunnen opslaan.
+def save_new_api_key(client_id, key, description): 
     client, _ = get_db_connection()
     if not client: return False, "No DB"
     try:
@@ -227,6 +224,27 @@ def revoke_api_key_db(client_id):
     if not client: return False, "No DB"
     client['api_gateway_db']['api_keys'].delete_one({'client_id': client_id})
     return True, None
+
+# --- NIEUWE USER MANAGEMENT FUNCTIES ---
+def load_all_users():
+    client, _ = get_db_connection()
+    if not client: return []
+    try:
+        # Haal gebruikers op, zonder password_hash
+        users = list(client['api_gateway_db']['users'].find({}, {'username': 1, 'created_at': 1}))
+        return [{'username': u['username'], 'created_at': u['created_at']} for u in users]
+    except Exception as e:
+        print(f"Error loading users: {e}")
+        return []
+
+def delete_user_db(username):
+    client, _ = get_db_connection()
+    if not client: return False, "No DB"
+    try:
+        client['api_gateway_db']['users'].delete_one({'username': username})
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 # --- AUTHENTICATIE ROUTE (JWT Login) ---
 @app.route('/api/auth/login', methods=['POST'])
@@ -256,35 +274,8 @@ def login_api():
     else:
         log_statistic("login_failed", username, "auth")
         return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
-
-# --- Eenvoudige Gebruikers Creatie (Verwijder na setup!) ---
-@app.route('/admin/setup_user', methods=['POST'])
-def setup_user():
-    client, _ = get_db_connection()
-    if not client: return jsonify({"error": "DB failure"}), 503
-    db = client['api_gateway_db']
-    
-    # Controleer of er al een gebruiker is
-    if db['users'].count_documents({}) > 0:
-        return jsonify({"error": "Er bestaat al een gebruiker. Setup voltooid."}), 403
         
-    data = request.json
-    if not data or 'username' not in data or 'password' not in data:
-         return jsonify({"error": "Ongeldige input: gebruikersnaam en wachtwoord vereist."}), 400
-         
-    username = data['username']
-    password = data['password']
-    
-    try:
-        db['users'].insert_one({
-            'username': username,
-            'password_hash': hash_password(password),
-            'created_at': datetime.datetime.utcnow(),
-            'role': 'admin' # Standaardrol
-        })
-        return jsonify({"status": "success", "message": f"Gebruiker '{username}' aangemaakt. VERWIJDER DEZE ROUTE NA DE SETUP!"}), 201
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# DE TIJDELIJKE setup_user ROUTE IS VERWIJDERD, GEBRUIK HET DASHBOARD VOOR USER CREATIE
 
 # --- Rate Limiter & Auth ---
 def get_client_id():
@@ -653,19 +644,16 @@ SETTINGS_CONTENT = """
     <div class="row mt-4">
         <div class="col-md-6">
             <div class="card p-4">
-                <h5>Nieuwe API Sleutel</h5>
+                <h5>Nieuwe Gebruiker Aanmaken</h5>
                 <form method="POST" action="/settings">
                     <div class="mb-3">
-                        <input type="text" name="key_description" class="form-control bg-dark text-white" placeholder="Naam (bv. Webshop)" required>
+                        <input type="text" name="username" class="form-control bg-dark text-white" placeholder="Gebruikersnaam" required>
                     </div>
-                    <button type="submit" name="action" value="generate_key" class="btn btn-success">Genereer</button>
+                    <div class="mb-3">
+                        <input type="password" name="password" class="form-control bg-dark text-white" placeholder="Wachtwoord" required>
+                    </div>
+                    <button type="submit" name="action" value="create_user" class="btn btn-success">Gebruiker Toevoegen</button>
                 </form>
-                {% if new_key %}
-                <div class="alert alert-success mt-3">
-                    <strong>Nieuwe Key:</strong> <code class="user-select-all">{{ new_key }}</code>
-                    <div class="small mt-1">Kopieer dit, het wordt niet meer getoond.</div>
-                </div>
-                {% endif %}
             </div>
             
             <div class="card p-4 mt-3">
@@ -679,8 +667,25 @@ SETTINGS_CONTENT = """
             </div>
         </div>
         <div class="col-md-6">
+            <div class="card p-4 mb-3">
+                <h5>Actieve Gebruikers (JWT)</h5>
+                <ul class="list-group list-group-flush">
+                    {% for user in active_users %}
+                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
+                        <div>{{ user.username }} <small class="text-muted">(Sinds: <span class="utc-timestamp" data-utc="{{ user.created_at.isoformat() }}"></span>)</small></div>
+                        <form method="POST" action="/settings" onsubmit="return confirm('Gebruiker \'{{ user.username }}\' verwijderen? Dit verbreekt alle actieve JWTs van deze gebruiker!');">
+                            <input type="hidden" name="action" value="delete_user">
+                            <input type="hidden" name="username" value="{{ user.username }}">
+                            <button class="btn btn-sm btn-danger">X</button>
+                        </form>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item bg-transparent text-muted">Geen gebruikers gevonden.</li>
+                    {% endfor %}
+                </ul>
+            </div>
             <div class="card p-4">
-                <h5>Actieve Sleutels</h5>
+                <h5>Actieve API Sleutels (Legacy)</h5>
                 <ul class="list-group list-group-flush">
                     {% for id, data in api_keys.items() %}
                     <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
@@ -856,23 +861,60 @@ def client_detail(source_app):
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
+    client, _ = get_db_connection()
+    db = client['api_gateway_db'] if client else None
+    
     if request.method == 'POST':
         action = request.form.get('action')
-        if action == 'generate_key':
-            desc = request.form.get('key_description')
-            key = generate_random_key()
-            client_id = desc.lower().replace(" ", "_") + "_" + secrets.token_hex(2)
-            if save_new_api_key(client_id, key, desc)[0]:
-                session['new_key'] = key
+        
+        # NIEUWE LOGICA VOOR GEBRUIKERSBEHEER
+        if action == 'create_user':
+            username = request.form.get('username')
+            password = request.form.get('password')
+            if not db:
+                flash("Fout: Geen DB verbinding.", "danger")
+            elif not username or not password:
+                flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
+            else:
+                try:
+                    # Hash en opslaan
+                    db['users'].insert_one({
+                        'username': username,
+                        'password_hash': hash_password(password),
+                        'created_at': datetime.datetime.utcnow(),
+                        'role': 'admin' # Standaardrol voor dashboard users
+                    })
+                    flash(f"Gebruiker '{username}' succesvol aangemaakt.", "success")
+                except OperationFailure as e:
+                    if "E11000 duplicate key" in str(e):
+                        flash(f"Fout: Gebruikersnaam '{username}' bestaat al.", "danger")
+                    else:
+                         flash(f"Fout bij aanmaken gebruiker: {e}", "danger")
+                except Exception as e:
+                    flash(f"Onverwachte fout: {e}", "danger")
+
+        elif action == 'delete_user':
+            username = request.form.get('username')
+            success, err = delete_user_db(username)
+            if success: flash(f"Gebruiker '{username}' verwijderd. Actieve JWT's zijn ongeldig geworden.", "warning")
+            else: flash(f"Fout: {err}", "danger")
+
+        # BESTAANDE LOGICA VOOR LEGACY EN DB SETTINGS
         elif action == 'revoke_key':
             revoke_api_key_db(request.form.get('client_id'))
         elif action == 'save_uri':
             app.config['MONGO_URI'] = request.form.get('mongo_uri')
             flash("URI opgeslagen", "info")
+            
         return redirect(url_for('settings'))
 
-    new_key = session.pop('new_key', None)
-    content = render_template_string(SETTINGS_CONTENT, api_keys=load_api_keys(), new_key=new_key, current_uri=app.config['MONGO_URI'])
+    api_keys = load_api_keys()
+    active_users = load_all_users() # Lijst met actieve users
+
+    content = render_template_string(SETTINGS_CONTENT, 
+                                     api_keys=api_keys, 
+                                     active_users=active_users,
+                                     current_uri=app.config['MONGO_URI'])
     return render_template_string(BASE_LAYOUT, page='settings', page_content=content)
 
 @app.route('/api/health')
@@ -882,7 +924,7 @@ def health():
 
 # --- DYNAMIC API ENDPOINT (General) ---
 @app.route('/api/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
-@require_auth # AANGEPAST
+@require_auth
 @limiter.limit("1000 per hour")
 def handle_dynamic_endpoint(endpoint_name):
     client, _ = get_db_connection()
@@ -944,7 +986,7 @@ def handle_dynamic_endpoint(endpoint_name):
 
 # --- SINGLE DOCUMENT OPERATIONS ---
 @app.route('/api/<endpoint_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
-@require_auth # AANGEPAST
+@require_auth
 @limiter.limit("1000 per hour")
 def handle_single_document(endpoint_name, doc_id):
     client, _ = get_db_connection()
