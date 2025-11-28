@@ -16,6 +16,11 @@
         .highlight-get {
             color: #6366f1; /* Indigo */
         }
+        /* Zorgt ervoor dat de input velden voor de JWT de inhoud niet afkappen bij weergave */
+        #apiKey {
+            white-space: pre;
+            overflow-x: auto;
+        }
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 p-8 font-sans">
@@ -23,13 +28,35 @@
         <h1 class="text-3xl font-bold mb-6 text-blue-400">Dynamic API Tester</h1>
         
         <p class="text-slate-400 mb-6 border-b border-slate-700 pb-3">
-            Test de verbinding met de Taskey MongoAPI Gateway. Voer je JWT-token of API Key in voor authenticatie.
-            De `app.py` API verwacht nu een responsformaat van `{ "id": "...", "data": {...} }` voor documenten.
+            Test de verbinding met de Taskey MongoAPI Gateway. Voer hieronder in om **automatisch** je JWT-token op te halen, of plak het handmatig.
         </p>
+        
+        <!-- Authenticatie Sectie -->
+        <div class="bg-slate-800 p-6 rounded-xl mb-6 border border-slate-700 shadow-xl">
+            <h2 class="text-xl font-semibold mb-4 text-white">1. Login & Haal JWT Op</h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div class="md:col-span-1">
+                    <label class="block text-sm text-slate-400 mb-1">Gebruikersnaam</label>
+                    <input type="text" id="loginUsername" placeholder="user" 
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div class="md:col-span-1">
+                    <label class="block text-sm text-slate-400 mb-1">Wachtwoord</label>
+                    <input type="password" id="loginPassword" placeholder="pass" 
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div class="md:col-span-2">
+                    <button onclick="fetchToken()" class="w-full bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg font-medium shadow-md">
+                        Login en Vul Token Veld
+                    </button>
+                </div>
+            </div>
+            <p id="loginStatus" class="mt-3 text-sm text-yellow-400"></p>
+        </div>
 
         <!-- Configuratie -->
         <div class="bg-slate-800 p-6 rounded-xl mb-6 border border-slate-700 shadow-xl">
-            <h2 class="text-xl font-semibold mb-4 text-white">Configuratie</h2>
+            <h2 class="text-xl font-semibold mb-4 text-white">2. API Configuratie & Token</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm text-slate-400 mb-1">Base URL (zonder /api)</label>
@@ -37,8 +64,8 @@
                         class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div>
-                    <label class="block text-sm text-slate-400 mb-1">Bearer Token (API Key / JWT)</label>
-                    <input type="text" id="apiKey" placeholder="Voer hier het Bearer Token in..." 
+                    <label class="block text-sm text-slate-400 mb-1">Bearer Token (JWT / API Key)</label>
+                    <input type="text" id="apiKey" placeholder="Plak of vul het token in..." 
                         class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:ring-blue-500 focus:border-blue-500">
                 </div>
             </div>
@@ -46,7 +73,7 @@
 
         <!-- Request Builder -->
         <div class="bg-slate-800 p-6 rounded-xl mb-6 border border-slate-700 shadow-xl">
-            <h2 class="text-xl font-semibold mb-4 text-white">Request Maken</h2>
+            <h2 class="text-xl font-semibold mb-4 text-white">3. Request Maken</h2>
             
             <div class="flex flex-wrap gap-4 mb-4 items-end">
                 <select id="method" class="bg-slate-900 border border-slate-600 rounded-lg p-3 text-white font-bold w-24 flex-shrink-0">
@@ -108,6 +135,49 @@
                 return String(data);
             }
         }
+        
+        async function fetchToken() {
+            const baseUrl = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const loginStatusEl = document.getElementById('loginStatus');
+            const apiKeyEl = document.getElementById('apiKey');
+
+            if (!username || !password) {
+                loginStatusEl.textContent = 'Vul zowel gebruikersnaam als wachtwoord in.';
+                loginStatusEl.className = 'mt-3 text-sm text-red-500';
+                return;
+            }
+
+            loginStatusEl.textContent = 'Bezig met inloggen...';
+            loginStatusEl.className = 'mt-3 text-sm text-yellow-400';
+
+            const loginUrl = `${baseUrl}/api/auth/login`;
+
+            try {
+                const res = await fetch(loginUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.token) {
+                    apiKeyEl.value = data.token;
+                    loginStatusEl.textContent = 'Succes! JWT Token opgehaald en ingevuld.';
+                    loginStatusEl.className = 'mt-3 text-sm text-green-500';
+                } else {
+                    const errorMsg = data.error || 'Onbekende fout bij authenticatie.';
+                    loginStatusEl.textContent = `Fout bij login: ${errorMsg}`;
+                    loginStatusEl.className = 'mt-3 text-sm text-red-500';
+                }
+            } catch (err) {
+                loginStatusEl.textContent = `Netwerkfout: Kan geen verbinding maken met ${loginUrl}.`;
+                loginStatusEl.className = 'mt-3 text-sm text-red-500';
+            }
+        }
+
 
         async function sendRequest() {
             const baseUrl = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
@@ -117,7 +187,17 @@
             const responseEl = document.getElementById('response');
             const statusEl = document.getElementById('status');
 
-            if (!endpoint) { alert("Vul een endpoint naam in (bijv. items of items/ID)!"); return; }
+            if (!endpoint) { 
+                statusEl.className = "mb-3 font-bold text-red-500";
+                statusEl.textContent = "Fout: Vul een endpoint naam in (bijv. items of items/ID)!"; 
+                return; 
+            }
+            if (!apiKey) {
+                statusEl.className = "mb-3 font-bold text-red-500";
+                statusEl.textContent = "Fout: Authenticatie Token (JWT/Key) is vereist!"; 
+                return;
+            }
+
 
             statusEl.className = "mb-3 font-bold text-yellow-500";
             statusEl.textContent = "Laden...";
@@ -150,14 +230,11 @@
                 const res = await fetch(fullUrl, options);
                 let data = null;
                 
-                // Probeer JSON te parsen als de status niet 204 is (No Content)
                 if (res.status !== 204) {
-                     // Gebruik res.clone() omdat res.json() de stream verbruikt
                     try {
                         data = await res.json();
                     } catch (e) {
                         data = await res.text();
-                        // Als JSON parsen faalt, toon dan de ruwe tekst
                         responseEl.textContent = data;
                         statusEl.className = res.ok ? "mb-3 font-bold text-yellow-500" : "mb-3 font-bold text-red-500";
                         statusEl.textContent = `Waarschuwing: Geen JSON respons! Status: ${res.status} ${res.statusText}`;
@@ -170,18 +247,13 @@
                     statusEl.textContent = `Succes: ${res.status} ${res.statusText}`;
 
                     if (data) {
-                        // De nieuwe app.py retourneert {id: ..., data: {...}} voor enkelvoudige documenten en arrays daarvan.
-                        
                         let displayData;
                         
                         if (Array.isArray(data)) {
-                             // Als het een array is, toon de hele array
                              displayData = data;
                         } else if (data.id && data.data && Object.keys(data).length === 2) {
-                            // Als het een enkel document is (POST/GET/PUT van een item)
                             displayData = data;
                         } else {
-                            // Anders, toon de ruwe JSON
                             displayData = data;
                         }
                         
