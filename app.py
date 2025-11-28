@@ -48,7 +48,6 @@ def encode_auth_token(user_id):
         }
         return jwt.encode(payload, app.config.get('JWT_SECRET'), algorithm='HS256')
     except Exception as e:
-        # Hier zou je een betere foutafhandeling kunnen toevoegen
         print(f"JWT Encoding Error: {e}")
         return None
 
@@ -56,11 +55,12 @@ def decode_auth_token(auth_token):
     """Decodeert het Auth Token - retourneert user_id of error string."""
     try:
         payload = jwt.decode(auth_token, app.config.get('JWT_SECRET'), algorithms=['HS256'])
-        return payload['sub']
+        # Retourneert tuple (True, user_id) bij succes
+        return (True, payload['sub'])
     except jwt.ExpiredSignatureError:
-        return 'Token is verlopen.'
+        return (False, 'Token is verlopen.')
     except jwt.InvalidTokenError:
-        return 'Ongeldig token.'
+        return (False, 'Ongeldig token.')
 
 # --- Helper: Opslag Formatteren (KB/MB) ---
 def format_size(size_bytes):
@@ -311,8 +311,8 @@ def get_client_id():
         client, _ = get_db_connection()
         if client:
             # 1. Probeer JWT te decoderen
-            user_id_or_error = decode_auth_token(token)
-            if not isinstance(user_id_or_error, str):
+            success, user_id_or_error = decode_auth_token(token)
+            if success:
                 # JWT is geldig. Gebruik de gebruikersnaam als client ID voor rate limiting.
                 db = client['api_gateway_db']
                 user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
@@ -338,10 +338,10 @@ def require_auth(f):
         client, _ = get_db_connection()
         
         # 1. Probeer JWT te decoderen
-        user_id_or_error = decode_auth_token(token)
+        success, user_id_or_error = decode_auth_token(token)
         
-        if not isinstance(user_id_or_error, str):
-            # *** FIX: JWT is geldig. Ga door met de gebruiker. ***
+        if success:
+            # JWT is geldig. Ga door met de gebruiker.
             db = client['api_gateway_db']
             try:
                 # Zoek de gebruikersnaam op basis van de ID in de token
@@ -354,6 +354,7 @@ def require_auth(f):
                 return jsonify({"error": f"Ongeldige JWT Sub (Gebruiker niet gevonden). Detail: {e}"}), 401
         
         # 2. Als JWT faalt (user_id_or_error is een error string), probeer Legacy API Key
+        jwt_error_detail = user_id_or_error # Dit is de foutmelding (bv. 'Token is verlopen.')
         client_id = None
         if client:
             db = client['api_gateway_db']
@@ -366,7 +367,7 @@ def require_auth(f):
             return f(*args, **kwargs)
         else:
             # Zowel JWT als API Key faalt
-            return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {user_id_or_error}"}), 401
+            return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {jwt_error_detail}"}), 401
         
     wrapper.__name__ = f.__name__ 
     return wrapper
