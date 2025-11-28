@@ -3,302 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Gateway Test Client</title>
-    <!-- Laad Tailwind CSS -->
+    <title>Dynamic API Test</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* Configureer dark mode en font */
-        :root {
-            --tw-bg-opacity: 1;
-            background-color: rgb(30 41 59 / var(--tw-bg-opacity)); /* Slate-900 */
-        }
-    </style>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen p-8 font-sans">
-    <div class="max-w-4xl mx-auto">
-        <h1 class="text-4xl font-bold mb-8 text-blue-400">API Gateway Test Client</h1>
-
-        <div id="messageBox" class="hidden p-4 rounded-lg mb-6 shadow-md" role="alert"></div>
-
-        <!-- Sectie: API Configuratie -->
-        <div class="bg-gray-700 p-6 rounded-xl shadow-lg mb-10 border border-blue-500/50">
-            <h2 class="text-2xl font-semibold mb-4 text-white">API Configuratie</h2>
-            
-            <!-- Basis URL Veld -->
-            <div class="mb-4">
-                <label for="apiBaseUrlInput" class="block text-sm font-medium text-gray-300 mb-2">API Basis URL (Host:Poort)</label>
-                <input type="url" id="apiBaseUrlInput" required 
-                       class="w-full p-3 bg-gray-600 border border-gray-500 rounded-lg text-white focus:ring-blue-500 focus:border-blue-500"
-                       placeholder="http://localhost:8080 of https://jouw-server.com:8080">
-            </div>
-
-            <!-- NIEUW: API Key Veld -->
-            <div class="mb-4">
-                <label for="apiKeyInput" class="block text-sm font-medium text-gray-300 mb-2">API Key (Bearer Token)</label>
-                <input type="text" id="apiKeyInput" required 
-                       class="w-full p-3 bg-gray-600 border border-gray-500 rounded-lg text-white font-mono text-sm focus:ring-blue-500 focus:border-blue-500"
-                       placeholder="Voer de unieke API Key in (bijv. de 20-karakters sleutel)">
-            </div>
-            
-            <p class="text-xs text-gray-400 mt-1">Beide velden worden automatisch opgeslagen in de browser.</p>
-
-        </div>
-        <!-- EINDE CONFIGURATIE -->
-
-        <!-- Sectie 1: Health Check -->
-        <div class="bg-gray-800 p-6 rounded-xl shadow-lg mb-10">
-            <h2 class="text-2xl font-semibold mb-4 text-white">1. Gezondheidscontrole (/api/health)</h2>
-            <p class="mb-4 text-gray-400">Controleer of de API-server draait en verbinding heeft met MongoDB.</p>
-            
-            <button id="healthCheckBtn" onclick="testHealth()"
-                    class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 ease-in-out shadow-lg">
-                <span id="healthSpinner" class="hidden animate-spin h-5 w-5 mr-2 border-b-2 border-white rounded-full"></span>
-                Test Health Check
-            </button>
-
-            <pre id="healthResult" class="mt-4 p-4 bg-gray-700 rounded-lg text-sm overflow-x-auto"></pre>
-        </div>
-
-        <!-- Sectie 2: Data Post -->
-        <div class="bg-gray-800 p-6 rounded-xl shadow-lg">
-            <h2 class="text-2xl font-semibold mb-4 text-white">2. Data Versturen (/api/data)</h2>
-            <p class="mb-6 text-gray-400">Simuleer een client die data naar de API-gateway stuurt (POST request).</p>
-
-            <form id="postForm" onsubmit="postData(event)">
-                
-                <div class="mb-4">
-                    <label for="sourceApp" class="block text-sm font-medium text-gray-300 mb-2">Client Naam (source_app)</label>
-                    <input type="text" id="sourceApp" required value="TestApp_1"
-                           class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-blue-500 focus:border-blue-500"
-                           placeholder="Naam van de brontoepassing">
+<body class="bg-slate-900 text-slate-100 p-8 font-sans">
+    <div class="max-w-3xl mx-auto">
+        <h1 class="text-3xl font-bold mb-6 text-blue-400">Dynamic API Tester</h1>
+        
+        <!-- Configuratie -->
+        <div class="bg-slate-800 p-6 rounded-lg mb-6 border border-slate-700">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Base URL</label>
+                    <input type="text" id="baseUrl" value="http://localhost:5000" class="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
                 </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">API Key</label>
+                    <input type="text" id="apiKey" placeholder="Bearer Token..." class="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
+                </div>
+            </div>
+        </div>
 
-                <div class="mb-4">
-                    <label for="payloadData" class="block text-sm font-medium text-gray-300 mb-2">JSON Payload (Data)</label>
-                    <textarea id="payloadData" rows="6" required 
-                              class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm focus:ring-blue-500 focus:border-blue-500">
+        <!-- Request Builder -->
+        <div class="bg-slate-800 p-6 rounded-lg mb-6 border border-slate-700">
+            <h2 class="text-xl font-semibold mb-4">Request Maken</h2>
+            
+            <div class="flex gap-4 mb-4">
+                <select id="method" class="bg-slate-900 border border-slate-600 rounded p-2 text-white font-bold w-32">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                </select>
+                <div class="flex-1 flex items-center bg-slate-900 border border-slate-600 rounded px-3">
+                    <span class="text-slate-400">/api/</span>
+                    <input type="text" id="endpoint" placeholder="products (moet bestaan in dashboard!)" class="bg-transparent w-full p-2 text-white focus:outline-none">
+                </div>
+            </div>
+
+            <div id="payloadContainer" class="hidden mb-4">
+                <label class="block text-sm text-slate-400 mb-1">JSON Payload</label>
+                <textarea id="payload" rows="5" class="w-full bg-slate-900 border border-slate-600 rounded p-2 font-mono text-sm">
 {
-    "order_id": 12345,
-    "user_email": "test@voorbeeld.nl",
-    "items": ["Laptop", "Muis"],
-    "total_amount": 1250.99
+  "name": "Nieuw Item",
+  "price": 29.95,
+  "stock": 100
 }</textarea>
-                    <p class="text-xs text-gray-500 mt-1">Zorg ervoor dat het geldige JSON is.</p>
-                </div>
+            </div>
 
-                <button type="submit" id="postDataBtn"
-                        class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 ease-in-out shadow-lg">
-                    <span id="postSpinner" class="hidden animate-spin h-5 w-5 mr-2 border-b-2 border-white rounded-full"></span>
-                    Verzend Data
-                </button>
-            </form>
+            <button onclick="sendRequest()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-medium">Verstuur Request</button>
+        </div>
 
-            <pre id="postResult" class="mt-6 p-4 bg-gray-700 rounded-lg text-sm overflow-x-auto"></pre>
+        <!-- Response -->
+        <div class="bg-slate-950 p-6 rounded-lg border border-slate-800 font-mono text-sm overflow-x-auto">
+            <div id="status" class="mb-2 font-bold text-slate-500">Klaar voor request...</div>
+            <pre id="response" class="text-green-400"></pre>
         </div>
     </div>
 
     <script>
-        // Declaraties en localStorage Keys
-        let apiBaseUrl = 'http://localhost:8080';
-        let apiKey = '';
-        const URL_STORAGE_KEY = 'api_gateway_base_url';
-        const KEY_STORAGE_KEY = 'api_gateway_api_key';
-        
-        const apiBaseUrlInput = document.getElementById('apiBaseUrlInput');
-        const apiKeyInput = document.getElementById('apiKeyInput');
-
-        // Functie om de opgeslagen waarden te laden
-        function loadSettings() {
-            const storedUrl = localStorage.getItem(URL_STORAGE_KEY);
-            const storedKey = localStorage.getItem(KEY_STORAGE_KEY);
-            
-            // Laad URL
-            if (storedUrl) {
-                apiBaseUrl = storedUrl;
-                apiBaseUrlInput.value = storedUrl;
-            } else {
-                 apiBaseUrlInput.value = apiBaseUrl;
-            }
-            
-            // Laad Key
-            if (storedKey) {
-                apiKey = storedKey;
-                apiKeyInput.value = storedKey;
-            }
-        }
-        
-        // Functie om de URL en Key op te slaan
-        function saveSettings() {
-            const newUrl = apiBaseUrlInput.value.trim();
-            const newKey = apiKeyInput.value.trim();
-
-            let message = '';
-
-            if (newUrl) {
-                apiBaseUrl = newUrl;
-                localStorage.setItem(URL_STORAGE_KEY, newUrl);
-                message += `URL bijgewerkt naar: ${newUrl}. `;
-            }
-            
-            if (newKey) {
-                apiKey = newKey;
-                localStorage.setItem(KEY_STORAGE_KEY, newKey);
-                message += `API Key opgeslagen.`;
-            } else {
-                localStorage.removeItem(KEY_STORAGE_KEY);
-                apiKey = '';
-                message = `API Key verwijderd. Authenticatie kan falen.`;
-            }
-            
-            if (message) showMessage('success', message);
-        }
-        
-        // Event listeners voor het opslaan bij wijziging
-        apiBaseUrlInput.addEventListener('change', saveSettings);
-        apiKeyInput.addEventListener('change', saveSettings);
-
-
-        // Functie om de algemene melding te tonen
-        function showMessage(type, message) {
-            const box = document.getElementById('messageBox');
-            box.textContent = message;
-            box.className = `p-4 rounded-lg mb-6 shadow-md ${type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`;
-            box.classList.remove('hidden');
-        }
-
-        // Functie om de headers op te halen (inclusief authenticatie)
-        function getHeaders(contentType = 'application/json') {
-             const headers = {};
-             
-            // Content-Type is alleen nodig voor POST/PUT requests
-            if (contentType) {
-                 headers['Content-Type'] = contentType;
-            }
-
-            // Authenticatie header
-            if (apiKey) {
-                headers['Authorization'] = `Bearer ${apiKey}`;
-            }
-            return headers;
-        }
-        
-        // Functie om de health check uit te voeren
-        async function testHealth() {
-            const btn = document.getElementById('healthCheckBtn');
-            const spinner = document.getElementById('healthSpinner');
-            const resultBox = document.getElementById('healthResult');
-
-            btn.disabled = true;
-            spinner.classList.remove('hidden');
-            resultBox.textContent = 'Bezig met verbinden...';
-            resultBox.className = 'mt-4 p-4 bg-gray-700 rounded-lg text-sm overflow-x-auto';
-            
-            try {
-                // Stuur de API key ook mee met de health check
-                const response = await fetch(apiBaseUrl + '/api/health', {
-                    headers: getHeaders(''), // Geen Content-Type nodig voor GET
-                });
-                const data = await response.json();
-                
-                resultBox.textContent = JSON.stringify(data, null, 2);
-                
-                if (response.status === 200 && data.mongodb_status === 'ok') {
-                    resultBox.className = 'mt-4 p-4 bg-green-900/50 border border-green-500 rounded-lg text-sm overflow-x-auto text-green-300';
-                    showMessage('success', 'Health Check OK. API en MongoDB zijn verbonden.');
-                } else {
-                    resultBox.className = 'mt-4 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                    showMessage('error', 'Health Check FOUT. De API is bereikbaar, maar MongoDB niet.');
-                }
-            } catch (error) {
-                resultBox.textContent = 'Fout: Kon geen verbinding maken met de API-gateway op ' + apiBaseUrl + '. Controleer of de Docker container draait.';
-                resultBox.className = 'mt-4 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                showMessage('error', 'Netwerkfout: API-gateway niet bereikbaar.');
-            } finally {
-                btn.disabled = false;
-                spinner.classList.add('hidden');
-            }
-        }
-
-        // Functie om data te posten
-        async function postData(event) {
-            event.preventDefault();
-            
-            if (!apiKey) {
-                showMessage('error', 'API Key ontbreekt. Voer een geldige sleutel in om data te posten.');
-                return;
-            }
-            
-            const btn = document.getElementById('postDataBtn');
-            const spinner = document.getElementById('postSpinner');
-            const resultBox = document.getElementById('postResult');
-            
-            btn.disabled = true;
-            spinner.classList.remove('hidden');
-            resultBox.textContent = 'Bezig met versturen...';
-            resultBox.className = 'mt-6 p-4 bg-gray-700 rounded-lg text-sm overflow-x-auto';
-
-            const sourceApp = document.getElementById('sourceApp').value;
-            let payloadText = document.getElementById('payloadData').value.trim();
-            
-            payloadText = payloadText.replace(/(\r\n|\n|\r)/gm, "");
-            
-            let dataToSend;
-            try {
-                const clientPayload = JSON.parse(payloadText);
-                dataToSend = {
-                    source_app: sourceApp,
-                    payload: clientPayload
-                };
-
-            } catch (e) {
-                resultBox.textContent = 'JSON Parse Fout: Ongeldige JSON in het Payload veld.';
-                resultBox.className = 'mt-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                showMessage('error', 'Fout: De ingevoerde JSON is ongeldig. Controleer de syntax.');
-                btn.disabled = false;
-                spinner.classList.add('hidden');
-                return;
-            }
-
-            try {
-                const response = await fetch(apiBaseUrl + '/api/data', {
-                    method: 'POST',
-                    headers: getHeaders(), // Gebruik geauthenticeerde headers
-                    body: JSON.stringify(dataToSend)
-                });
-
-                const responseData = await response.json();
-                
-                resultBox.textContent = `HTTP Status: ${response.status}\n` + JSON.stringify(responseData, null, 2);
-
-                if (response.ok) { // Status 200-299
-                    resultBox.className = 'mt-6 p-4 bg-green-900/50 border border-green-500 rounded-lg text-sm overflow-x-auto text-green-300';
-                    showMessage('success', 'Data succesvol verzonden! Controleer het dashboard.');
-                } else if (response.status === 401) {
-                     resultBox.className = 'mt-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                    showMessage('error', 'Fout (401): Authenticatie mislukt. Controleer de API Key.');
-                } else if (response.status === 503) {
-                     resultBox.className = 'mt-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                    showMessage('error', 'Fout (503): API draait, maar kan geen verbinding maken met MongoDB.');
-                } else {
-                    resultBox.className = 'mt-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                    showMessage('error', `Fout (${response.status}): De API heeft een fout geretourneerd.`);
-                }
-
-            } catch (error) {
-                resultBox.textContent = 'Fout: Kon geen verbinding maken met de API-gateway op ' + apiBaseUrl + '.';
-                resultBox.className = 'mt-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-sm overflow-x-auto text-red-300';
-                showMessage('error', 'Netwerkfout: API-gateway niet bereikbaar.');
-            } finally {
-                btn.disabled = false;
-                spinner.classList.add('hidden');
-            }
-        }
-
-        // Automatische health check bij laden
-        document.addEventListener('DOMContentLoaded', () => {
-            loadSettings(); // Laad de URL en KEY vanuit localStorage
-            testHealth();
+        document.getElementById('method').addEventListener('change', (e) => {
+            const payload = document.getElementById('payloadContainer');
+            if (e.target.value === 'POST') payload.classList.remove('hidden');
+            else payload.classList.add('hidden');
         });
+
+        async function sendRequest() {
+            const baseUrl = document.getElementById('baseUrl').value;
+            const endpoint = document.getElementById('endpoint').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const method = document.getElementById('method').value;
+            const responseEl = document.getElementById('response');
+            const statusEl = document.getElementById('status');
+
+            if(!endpoint) { alert("Vul een endpoint naam in!"); return; }
+
+            statusEl.textContent = "Laden...";
+            responseEl.textContent = "";
+
+            const headers = {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            };
+
+            const options = { method, headers };
+            if (method === 'POST') {
+                try {
+                    options.body = JSON.stringify(JSON.parse(document.getElementById('payload').value));
+                } catch(e) {
+                    alert("Ongeldige JSON!"); return;
+                }
+            }
+
+            try {
+                const res = await fetch(`${baseUrl}/api/${endpoint}`, options);
+                statusEl.textContent = `Status: ${res.status} ${res.statusText}`;
+                const data = await res.json();
+                responseEl.textContent = JSON.stringify(data, null, 2);
+            } catch (err) {
+                statusEl.textContent = "Netwerk Fout";
+                responseEl.textContent = err.toString();
+            }
+        }
     </script>
 </body>
 </html>
