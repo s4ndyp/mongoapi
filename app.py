@@ -58,9 +58,9 @@ def decode_auth_token(auth_token):
         payload = jwt.decode(auth_token, app.config.get('JWT_SECRET'), algorithms=['HS256'])
         return payload['sub']
     except jwt.ExpiredSignatureError:
-        return 'Token is verlopen. Gelieve opnieuw in te loggen.'
+        return 'Token is verlopen.'
     except jwt.InvalidTokenError:
-        return 'Ongeldig token. Gelieve opnieuw in te loggen.'
+        return 'Ongeldig token.'
 
 # --- Helper: Opslag Formatteren (KB/MB) ---
 def format_size(size_bytes):
@@ -341,27 +341,32 @@ def require_auth(f):
         user_id_or_error = decode_auth_token(token)
         
         if not isinstance(user_id_or_error, str):
-            # JWT is geldig. Zoek de gebruikersnaam op voor logging.
+            # *** FIX: JWT is geldig. Ga door met de gebruiker. ***
             db = client['api_gateway_db']
-            user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
-            client_id = user['username'] if user else f"user_{user_id_or_error}"
+            try:
+                # Zoek de gebruikersnaam op basis van de ID in de token
+                user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
+                client_id = user['username'] if user else f"user_{user_id_or_error}"
+                request.client_id = client_id
+                return f(*args, **kwargs)
+            except Exception as e:
+                # Mocht de ObjectId uit de token ongeldig zijn of de gebruiker niet bestaan
+                return jsonify({"error": f"Ongeldige JWT Sub (Gebruiker niet gevonden). Detail: {e}"}), 401
+        
+        # 2. Als JWT faalt (user_id_or_error is een error string), probeer Legacy API Key
+        client_id = None
+        if client:
+            db = client['api_gateway_db']
+            key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
+            if key_doc: client_id = key_doc['client_id']
+            
+        if client_id:
+            # API Key is geldig
             request.client_id = client_id
             return f(*args, **kwargs)
         else:
-             # 2. Als JWT faalt, probeer API Key (voor backwards compatibility/legacy clients)
-             client_id = None
-             if client:
-                 db = client['api_gateway_db']
-                 key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
-                 if key_doc: client_id = key_doc['client_id']
-                 
-             if client_id:
-                 # API Key is geldig (Log de Client ID)
-                 request.client_id = client_id
-                 return f(*args, **kwargs)
-             else:
-                 # Zowel JWT als API Key faalt
-                 return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {user_id_or_error}"}), 401
+            # Zowel JWT als API Key faalt
+            return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {user_id_or_error}"}), 401
         
     wrapper.__name__ = f.__name__ 
     return wrapper
@@ -983,7 +988,6 @@ def settings():
                     new_token = encode_auth_token(new_user_id)
                     
                     # 3. HTML fragment genereren om de token te tonen en te kopiëren
-                    # FIX: Gebruik d-flex en een breder input veld om de volledige token te garanderen.
                     token_html = f"""
                     <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
                     <div class="d-flex align-items-center">
