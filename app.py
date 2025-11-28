@@ -137,7 +137,6 @@ def log_statistic(action, source_app, endpoint="default"):
             print(f"Log error: {e}")
 
 # --- Endpoint Management Functies ---
-# ... (rest van de Endpoint Management Functies blijven ongewijzigd) ...
 def get_configured_endpoints():
     client, _ = get_db_connection()
     endpoints = []
@@ -207,7 +206,6 @@ def load_api_keys():
         keys[doc['client_id']] = {'key': doc['key'], 'description': doc['description']}
     return keys
 
-# Let op: Deze functie wordt niet meer gebruikt voor de UI (generate_key is weg) maar blijft om API Keys te kunnen opslaan.
 def save_new_api_key(client_id, key, description): 
     client, _ = get_db_connection()
     if not client: return False, "No DB"
@@ -275,8 +273,6 @@ def login_api():
         log_statistic("login_failed", username, "auth")
         return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
         
-# DE TIJDELIJKE setup_user ROUTE IS VERWIJDERD, GEBRUIK HET DASHBOARD VOOR USER CREATIE
-
 # --- Rate Limiter & Auth ---
 def get_client_id():
     auth_header = request.headers.get('Authorization')
@@ -871,7 +867,9 @@ def settings():
         if action == 'create_user':
             username = request.form.get('username')
             password = request.form.get('password')
-            if not db:
+            
+            # CORRECTIE: Vergelijk de PyMongo database object met None
+            if db is None:
                 flash("Fout: Geen DB verbinding.", "danger")
             elif not username or not password:
                 flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
