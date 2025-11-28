@@ -10,6 +10,7 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from bson import ObjectId
 
 # --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
@@ -741,7 +742,7 @@ def health():
     client, _ = get_db_connection()
     return jsonify({"status": "running", "db": "ok" if client else "error"})
 
-# --- DYNAMIC API ENDPOINT ---
+# --- DYNAMIC API ENDPOINT (General) ---
 @app.route('/api/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
 @require_api_key
 @limiter.limit("1000 per hour")
@@ -765,16 +766,96 @@ def handle_dynamic_endpoint(endpoint_name):
             "meta": {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
         })
         log_statistic("post_data", client_id, endpoint_name)
+        # Return ID to be used by frontend
         return jsonify({"status": "created", "id": str(result.inserted_id)}), 201
 
     elif request.method == 'GET':
         query = {}
+        # Support basic query filtering
         for k, v in request.args.items():
             if k != '_limit': query[f"data.{k}"] = v
+            
         limit = int(request.args.get('_limit', 50))
-        docs = list(collection.find(query, {'_id': 0}).sort("meta.created_at", -1).limit(limit))
+        # Fetch with _id but we'll rename it
+        docs = list(collection.find(query).sort("meta.created_at", -1).limit(limit))
+        
+        # Transform _id to string id
+        result_docs = []
+        for d in docs:
+            d['id'] = str(d['_id'])
+            del d['_id']
+            result_docs.append(d)
+            
         log_statistic("read_data", client_id, endpoint_name)
-        return jsonify(docs), 200
+        return jsonify(result_docs), 200
+
+    elif request.method == 'DELETE':
+        # Bulk delete support via query params (e.g. ?projectId=123)
+        query = {}
+        for k, v in request.args.items():
+            query[f"data.{k}"] = v
+        
+        if not query:
+             return jsonify({"error": "DELETE requires query parameters for safety"}), 400
+
+        result = collection.delete_many(query)
+        log_statistic("delete_bulk", client_id, endpoint_name)
+        return jsonify({"status": "deleted", "count": result.deleted_count}), 200
+
+    return jsonify({"error": "Method not allowed"}), 405
+
+# --- SINGLE DOCUMENT OPERATIONS ---
+@app.route('/api/<endpoint_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
+@require_api_key
+@limiter.limit("1000 per hour")
+def handle_single_document(endpoint_name, doc_id):
+    client, _ = get_db_connection()
+    if not client: return jsonify({"error": "DB failure"}), 503
+    db = client['api_gateway_db']
+
+    coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
+    collection = db[coll_name]
+    client_id = getattr(request, 'client_id', 'unknown')
+
+    try:
+        oid = ObjectId(doc_id)
+    except:
+        return jsonify({"error": "Invalid ID format"}), 400
+
+    if request.method == 'GET':
+        doc = collection.find_one({'_id': oid})
+        if not doc: return jsonify({"error": "Not found"}), 404
+        doc['id'] = str(doc['_id'])
+        del doc['_id']
+        log_statistic("read_one", client_id, endpoint_name)
+        return jsonify(doc), 200
+
+    elif request.method == 'PUT':
+        data = request.json
+        if not data: return jsonify({"error": "No JSON"}), 400
+        
+        # We merge updates into the 'data' field
+        update_fields = {f"data.{k}": v for k, v in data.items()}
+        update_fields["meta.updated_at"] = datetime.datetime.utcnow()
+        
+        result = collection.update_one({'_id': oid}, {'$set': update_fields})
+        
+        if result.matched_count == 0:
+            return jsonify({"error": "Not found"}), 404
+            
+        # Return updated document
+        updated_doc = collection.find_one({'_id': oid})
+        updated_doc['id'] = str(updated_doc['_id'])
+        del updated_doc['_id']
+        log_statistic("update_one", client_id, endpoint_name)
+        return jsonify(updated_doc), 200
+
+    elif request.method == 'DELETE':
+        result = collection.delete_one({'_id': oid})
+        if result.deleted_count == 0:
+            return jsonify({"error": "Not found"}), 404
+        log_statistic("delete_one", client_id, endpoint_name)
+        return jsonify({"status": "deleted"}), 204
 
     return jsonify({"error": "Method not allowed"}), 405
 
