@@ -12,6 +12,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from bson import ObjectId
 
+# NIEUWE IMPORTS voor JWT en hashing
+import jwt 
+from bcrypt import hashpw, gensalt, checkpw
+
 # --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 MONGO_CLIENT = None
@@ -20,10 +24,48 @@ CORS(app)
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
+# NIEUWE CONFIGURATIE VOOR JWT
+app.config['JWT_SECRET'] = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
+app.config['JWT_EXPIRY_MINUTES'] = 60 * 24 # Token verloopt na 24 uur
+
 # --- Helper: Random Key ---
 def generate_random_key(length=20):
     characters = string.ascii_letters + string.digits + '!@#$%^&*'
     return ''.join(secrets.choice(characters) for _ in range(length))
+
+# --- Helper: Wachtwoord Hashing ---
+def hash_password(password):
+    """Gebruik bcrypt voor veilige wachtwoord hashing."""
+    return hashpw(password.encode('utf-8'), gensalt()).decode('utf-8')
+
+def check_password(password, hashed):
+    """Controleer het wachtwoord tegen de hash."""
+    return checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+# --- Helper: JWT Functies ---
+def encode_auth_token(user_id):
+    """Genereert het Auth Token."""
+    try:
+        payload = {
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=app.config['JWT_EXPIRY_MINUTES']),
+            'iat': datetime.datetime.utcnow(),
+            'sub': str(user_id) # Subject is de gebruikers ID
+        }
+        return jwt.encode(payload, app.config.get('JWT_SECRET'), algorithm='HS256')
+    except Exception as e:
+        # Hier zou je een betere foutafhandeling kunnen toevoegen
+        print(f"JWT Encoding Error: {e}")
+        return None
+
+def decode_auth_token(auth_token):
+    """Decodeert het Auth Token - retourneert user_id of error string."""
+    try:
+        payload = jwt.decode(auth_token, app.config.get('JWT_SECRET'), algorithms=['HS256'])
+        return payload['sub']
+    except jwt.ExpiredSignatureError:
+        return 'Token is verlopen. Gelieve opnieuw in te loggen.'
+    except jwt.InvalidTokenError:
+        return 'Ongeldig token. Gelieve opnieuw in te loggen.'
 
 # --- Helper: Opslag Formatteren (KB/MB) ---
 def format_size(size_bytes):
@@ -48,8 +90,11 @@ def ensure_indexes(db):
         db['api_keys'].create_index("key", unique=True, background=True)
         db['api_keys'].create_index("client_id", unique=True, background=True)
         
-        # NIEUW: Index voor dynamische endpoints configuratie
+        # Index voor dynamische endpoints configuratie
         db['endpoints'].create_index("name", unique=True, background=True)
+        
+        # NIEUW: Index voor gebruikers (voor JWT login)
+        db['users'].create_index("username", unique=True, background=True)
         
         print("MongoDB Indexen gecontroleerd.")
     except Exception as e:
@@ -183,6 +228,64 @@ def revoke_api_key_db(client_id):
     client['api_gateway_db']['api_keys'].delete_one({'client_id': client_id})
     return True, None
 
+# --- AUTHENTICATIE ROUTE (JWT Login) ---
+@app.route('/api/auth/login', methods=['POST'])
+def login_api():
+    client, _ = get_db_connection()
+    if not client: return jsonify({"error": "DB failure"}), 503
+    
+    data = request.json
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({"error": "Ongeldige input: gebruikersnaam en wachtwoord vereist."}), 400
+        
+    username = data['username']
+    password = data['password']
+    
+    db = client['api_gateway_db']
+    user = db['users'].find_one({'username': username})
+    
+    if user and check_password(password, user['password_hash']):
+        # Succesvol ingelogd, genereer JWT
+        token = encode_auth_token(user['_id'])
+        log_statistic("login_success", username, "auth")
+        return jsonify({
+            "status": "success", 
+            "token": token,
+            "expires_in_minutes": app.config['JWT_EXPIRY_MINUTES']
+        }), 200
+    else:
+        log_statistic("login_failed", username, "auth")
+        return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
+
+# --- Eenvoudige Gebruikers Creatie (Verwijder na setup!) ---
+@app.route('/admin/setup_user', methods=['POST'])
+def setup_user():
+    client, _ = get_db_connection()
+    if not client: return jsonify({"error": "DB failure"}), 503
+    db = client['api_gateway_db']
+    
+    # Controleer of er al een gebruiker is
+    if db['users'].count_documents({}) > 0:
+        return jsonify({"error": "Er bestaat al een gebruiker. Setup voltooid."}), 403
+        
+    data = request.json
+    if not data or 'username' not in data or 'password' not in data:
+         return jsonify({"error": "Ongeldige input: gebruikersnaam en wachtwoord vereist."}), 400
+         
+    username = data['username']
+    password = data['password']
+    
+    try:
+        db['users'].insert_one({
+            'username': username,
+            'password_hash': hash_password(password),
+            'created_at': datetime.datetime.utcnow(),
+            'role': 'admin' # Standaardrol
+        })
+        return jsonify({"status": "success", "message": f"Gebruiker '{username}' aangemaakt. VERWIJDER DEZE ROUTE NA DE SETUP!"}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # --- Rate Limiter & Auth ---
 def get_client_id():
     auth_header = request.headers.get('Authorization')
@@ -190,30 +293,59 @@ def get_client_id():
         token = auth_header.split(' ')[1]
         client, _ = get_db_connection()
         if client:
+            # 1. Probeer JWT te decoderen
+            user_id_or_error = decode_auth_token(token)
+            if not isinstance(user_id_or_error, str):
+                # JWT is geldig. Gebruik de gebruikersnaam als client ID voor rate limiting.
+                db = client['api_gateway_db']
+                user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
+                return user['username'] if user else f"user_{user_id_or_error}"
+                
+            # 2. Fallback naar API Key check (bestaande clients/dashboard)
             key_doc = client['api_gateway_db']['api_keys'].find_one({'key': token}, {'client_id': 1})
             if key_doc: return key_doc['client_id']
+            
     return get_remote_address()
 
 limiter = Limiter(key_func=get_client_id, app=app, default_limits=["2000 per day", "500 per hour"], storage_uri="memory://")
 
-def require_api_key(f):
+def require_auth(f):
     def wrapper(*args, **kwargs):
         if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
         auth_header = request.headers.get('Authorization')
+        
         if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({"error": "Auth required"}), 401
+            return jsonify({"error": "Authenticatie vereist (Bearer Token)"}), 401
+            
         token = auth_header.split(' ')[1]
         client, _ = get_db_connection()
-        client_id = None
-        if client:
-            key_doc = client['api_gateway_db']['api_keys'].find_one({'key': token}, {'client_id': 1})
-            if key_doc: client_id = key_doc['client_id']
         
-        if client_id:
+        # 1. Probeer JWT te decoderen
+        user_id_or_error = decode_auth_token(token)
+        
+        if not isinstance(user_id_or_error, str):
+            # JWT is geldig. Zoek de gebruikersnaam op voor logging.
+            db = client['api_gateway_db']
+            user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
+            client_id = user['username'] if user else f"user_{user_id_or_error}"
             request.client_id = client_id
             return f(*args, **kwargs)
         else:
-            return jsonify({"error": "Invalid Key"}), 401
+             # 2. Als JWT faalt, probeer API Key (voor backwards compatibility/legacy clients)
+             client_id = None
+             if client:
+                 db = client['api_gateway_db']
+                 key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
+                 if key_doc: client_id = key_doc['client_id']
+                 
+             if client_id:
+                 # API Key is geldig (Log de Client ID)
+                 request.client_id = client_id
+                 return f(*args, **kwargs)
+             else:
+                 # Zowel JWT als API Key faalt
+                 return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {user_id_or_error}"}), 401
+        
     wrapper.__name__ = f.__name__ 
     return wrapper
 
@@ -430,7 +562,6 @@ ENDPOINTS_CONTENT = """
         {% endfor %}
     </div>
 
-    <!-- Modal -->
     <div class="modal fade" id="addEndpointModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
@@ -469,7 +600,6 @@ CLIENT_DETAIL_CONTENT = """
         <a href="/" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Terug</a>
     </div>
     
-    <!-- Client Stats Summary -->
     <div class="row mb-4">
         <div class="col-md-6">
             <div class="card p-3">
@@ -481,7 +611,9 @@ CLIENT_DETAIL_CONTENT = """
             <div class="card p-3">
                 <h5 class="text-muted">Authenticatie</h5>
                 <div class="mt-2">
-                    {% if has_key %}
+                    {% if is_user %}
+                        <span class="badge bg-primary fs-5"><i class="bi bi-person-fill"></i> Logged in User (JWT)</span>
+                    {% elif has_key %}
                         <span class="badge bg-success fs-5"><i class="bi bi-key-fill"></i> API Key Actief</span>
                     {% else %}
                         <span class="badge bg-danger fs-5"><i class="bi bi-exclamation-triangle-fill"></i> Geen Key</span>
@@ -690,6 +822,7 @@ def client_detail(source_app):
     logs = []
     total_requests = 0
     has_key = False
+    is_user = False
     
     if client:
         db = client['api_gateway_db']
@@ -700,6 +833,10 @@ def client_detail(source_app):
         # Check of client een API key heeft
         if db['api_keys'].find_one({'client_id': source_app}):
             has_key = True
+
+        # Check of client een geregistreerde gebruiker is
+        if db['users'].find_one({'username': source_app}):
+            is_user = True
 
         cursor = db['statistics'].find({'source': source_app}).sort('timestamp', -1).limit(20)
         for doc in cursor:
@@ -713,7 +850,8 @@ def client_detail(source_app):
                                    source_app=source_app, 
                                    logs=logs,
                                    total_requests=total_requests,
-                                   has_key=has_key)
+                                   has_key=has_key,
+                                   is_user=is_user)
     return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -744,7 +882,7 @@ def health():
 
 # --- DYNAMIC API ENDPOINT (General) ---
 @app.route('/api/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
-@require_api_key
+@require_auth # AANGEPAST
 @limiter.limit("1000 per hour")
 def handle_dynamic_endpoint(endpoint_name):
     client, _ = get_db_connection()
@@ -806,7 +944,7 @@ def handle_dynamic_endpoint(endpoint_name):
 
 # --- SINGLE DOCUMENT OPERATIONS ---
 @app.route('/api/<endpoint_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
-@require_api_key
+@require_auth # AANGEPAST
 @limiter.limit("1000 per hour")
 def handle_single_document(endpoint_name, doc_id):
     client, _ = get_db_connection()
