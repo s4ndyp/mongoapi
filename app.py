@@ -91,6 +91,10 @@ def ensure_indexes(db):
         # Index voor gebruikers (voor JWT login)
         db['users'].create_index("username", unique=True, background=True)
         
+        # Indexen voor snellere project en type queries op de data
+        db['data_items'].create_index([("projectId", 1), ("type", 1)], background=True)
+        db['data_projects'].create_index([("name", 1)], background=True)
+        
         print("MongoDB Indexen gecontroleerd.")
     except Exception as e:
         print(f"Waarschuwing indexen: {e}")
@@ -148,13 +152,28 @@ def get_configured_endpoints():
         'system': True,
         'created_at': datetime.datetime.min
     })
+    
+    # Voeg de nieuwe Taskey endpoints toe die nu in de client worden gebruikt
+    endpoints.append({
+        'name': 'items',
+        'description': 'Taskey Items (Taken en Notities)',
+        'system': True,
+        'created_at': datetime.datetime.min
+    })
+    endpoints.append({
+        'name': 'projects',
+        'description': 'Taskey Projecten',
+        'system': True,
+        'created_at': datetime.datetime.min
+    })
+
 
     if client:
         # 2. Voeg dynamische endpoints uit DB toe
         try:
             db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}).sort('name', 1))
             for ep in db_endpoints:
-                if ep.get('name') != 'data':
+                if ep.get('name') not in ['data', 'items', 'projects']: # Filter de nieuwe en oude vaste endpoints
                     ep['system'] = False
                     endpoints.append(ep)
         except Exception as e:
@@ -162,10 +181,21 @@ def get_configured_endpoints():
             
     return endpoints
 
+def get_db_collection_name(endpoint_name):
+    """Bepaalt de collectienaam op basis van het endpoint."""
+    if endpoint_name == 'data':
+        return 'app_data'
+    elif endpoint_name == 'items':
+        return 'data_items'
+    elif endpoint_name == 'projects':
+        return 'data_projects'
+    else:
+        return f"data_{endpoint_name}"
+
 def get_endpoint_stats(endpoint_name):
     client, _ = get_db_connection()
     if not client: return {'count': 0, 'size': '0 KB'}
-    coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
+    coll_name = get_db_collection_name(endpoint_name)
     try:
         stats = client['api_gateway_db'].command("collstats", coll_name)
         return {'count': stats.get('count', 0), 'size': format_size(stats.get('storageSize', 0))}
@@ -175,25 +205,25 @@ def get_endpoint_stats(endpoint_name):
 def create_endpoint(name, description):
     if not re.match("^[a-zA-Z0-9_]+$", name):
         return False, "Naam mag alleen letters, cijfers en underscores bevatten."
-    if name == 'data':
-        return False, "De naam 'data' is gereserveerd voor het systeem."
+    if name in ['data', 'items', 'projects']:
+        return False, f"De naam '{name}' is gereserveerd voor het systeem."
     client, _ = get_db_connection()
     if not client: return False, "No DB"
     try:
         client['api_gateway_db']['endpoints'].insert_one({
             'name': name, 'description': description, 'created_at': datetime.datetime.utcnow()
         })
-        client['api_gateway_db'].create_collection(f"data_{name}")
+        client['api_gateway_db'].create_collection(get_db_collection_name(name))
         return True, None
     except Exception as e: return False, str(e)
 
 def delete_endpoint(name):
-    if name == 'data': return False
+    if name in ['data', 'items', 'projects']: return False
     client, _ = get_db_connection()
     if not client: return False
     try:
         client['api_gateway_db']['endpoints'].delete_one({'name': name})
-        client['api_gateway_db'][f"data_{name}"].drop()
+        client['api_gateway_db'][get_db_collection_name(name)].drop()
         return True
     except: return False
 
@@ -564,7 +594,7 @@ ENDPOINTS_CONTENT = """
                                 <span class="input-group-text bg-secondary text-white">/api/</span>
                                 <input type="text" name="name" class="form-control bg-black text-white" required pattern="[a-zA-Z0-9_]+" placeholder="products">
                             </div>
-                            <div class="form-text text-muted">Gereserveerd: 'data'</div>
+                            <div class="form-text text-muted">Gereserveerd: 'data', 'items', 'projects'</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Omschrijving</label>
@@ -735,7 +765,7 @@ def dashboard():
             endpoints = get_configured_endpoints()
             for ep in endpoints:
                  try: 
-                    coll_name = 'app_data' if ep['name'] == 'data' else f"data_{ep['name']}"
+                    coll_name = get_db_collection_name(ep['name'])
                     s = db.command("collstats", coll_name)
                     total_size += s.get('storageSize', 0)
                  except: pass
@@ -929,40 +959,78 @@ def handle_dynamic_endpoint(endpoint_name):
     if not client: return jsonify({"error": "DB failure"}), 503
     db = client['api_gateway_db']
     
-    if endpoint_name != 'data' and not db['endpoints'].find_one({'name': endpoint_name}):
+    # Controleer of het een bekend endpoint is.
+    if endpoint_name not in ['data', 'items', 'projects'] and not db['endpoints'].find_one({'name': endpoint_name}):
         return jsonify({"error": f"Endpoint '{endpoint_name}' not found"}), 404
 
-    coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
+    coll_name = get_db_collection_name(endpoint_name)
     collection = db[coll_name]
     client_id = getattr(request, 'client_id', 'unknown')
 
     if request.method == 'POST':
         data = request.json
         if not data: return jsonify({"error": "No JSON"}), 400
-        result = collection.insert_one({
-            "data": data,
-            "meta": {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
-        })
-        log_statistic("post_data", client_id, endpoint_name)
-        # Return ID to be used by frontend
-        return jsonify({"status": "created", "id": str(result.inserted_id)}), 201
+        
+        # --- FIX VOOR OPSLAAN VAN CLIENT DATA ---
+        # De client stuurt de volledige data payload. We slaan deze op als root document
+        # en voegen de meta-informatie toe, inclusief een dummy ID als de client die al stuurde.
+        
+        # Voeg meta-informatie toe
+        data['meta'] = {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
+        
+        # Verwijder een eventuele client-side 'id' of '_id' zodat MongoDB zijn eigen _id aanmaakt
+        # Client gebruikt 'id' of 'client_id' in de payload die in het document terecht komen.
+        # MongoDB voegt de '_id' toe bij insert.
+        
+        try:
+            result = collection.insert_one(data)
+            log_statistic("post_data", client_id, endpoint_name)
+            
+            # Stuur het opgeslagen document terug, inclusief de nieuwe MongoDB _id
+            # Dit is nodig voor de client om het item te bewerken
+            saved_doc = collection.find_one({'_id': result.inserted_id})
+
+            # Formatteer de respons zoals de client verwacht: {id: 'mongo_id', data: {..client_data..}}
+            # We moeten de client-data (alle velden BEHALVE _id en id) en de MongoDB _id terugsturen.
+            
+            # De nieuwe structuur is nu dat de client-data HET DOCUMENT is.
+            # We sturen het document terug met een hernoemde '_id' naar 'id'.
+            if saved_doc:
+                saved_doc['id'] = str(saved_doc['_id'])
+                del saved_doc['_id']
+                return jsonify({"id": saved_doc['id'], "data": saved_doc}), 201
+            else:
+                return jsonify({"status": "created", "id": str(result.inserted_id), "data": {}}), 201
+
+        except Exception as e:
+            # Vaak een duplicate key error als de client een ID meestuurt en er een unieke index is
+            print(f"MongoDB Insert Error: {e}")
+            return jsonify({"error": f"Kon document niet opslaan: {e}"}), 500
 
     elif request.method == 'GET':
         query = {}
-        # Support basic query filtering
+        # Support basic query filtering op de root velden
         for k, v in request.args.items():
-            if k != '_limit': query[f"data.{k}"] = v
+            if k != '_limit': 
+                # Query nu direct op root velden (bijv. 'projectId' of 'type')
+                query[k] = v 
             
         limit = int(request.args.get('_limit', 50))
-        # Fetch with _id but we'll rename it
+        
+        # Fetch met _id
         docs = list(collection.find(query).sort("meta.created_at", -1).limit(limit))
         
-        # Transform _id to string id
+        # Transformeer _id naar string id en stuur het volledige document terug als 'data'
         result_docs = []
         for d in docs:
             d['id'] = str(d['_id'])
             del d['_id']
-            result_docs.append(d)
+            # Stuur het document terug in de client-formaat {id: 'mongo_id', data: {...document...}}
+            # Zodat de client de structuur herkent.
+            result_docs.append({
+                "id": d['id'],
+                "data": d # Het volledige document
+            })
             
         log_statistic("read_data", client_id, endpoint_name)
         return jsonify(result_docs), 200
@@ -971,7 +1039,7 @@ def handle_dynamic_endpoint(endpoint_name):
         # Bulk delete support via query params (e.g. ?projectId=123)
         query = {}
         for k, v in request.args.items():
-            query[f"data.{k}"] = v
+            query[k] = v
         
         if not query:
              return jsonify({"error": "DELETE requires query parameters for safety"}), 400
@@ -991,7 +1059,7 @@ def handle_single_document(endpoint_name, doc_id):
     if not client: return jsonify({"error": "DB failure"}), 503
     db = client['api_gateway_db']
 
-    coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
+    coll_name = get_db_collection_name(endpoint_name)
     collection = db[coll_name]
     client_id = getattr(request, 'client_id', 'unknown')
 
@@ -1003,30 +1071,49 @@ def handle_single_document(endpoint_name, doc_id):
     if request.method == 'GET':
         doc = collection.find_one({'_id': oid})
         if not doc: return jsonify({"error": "Not found"}), 404
+        
         doc['id'] = str(doc['_id'])
         del doc['_id']
         log_statistic("read_one", client_id, endpoint_name)
-        return jsonify(doc), 200
+        # Formatteer voor de client: {id: 'mongo_id', data: {...document...}}
+        return jsonify({"id": doc['id'], "data": doc}), 200
 
     elif request.method == 'PUT':
         data = request.json
         if not data: return jsonify({"error": "No JSON"}), 400
         
-        # We merge updates into the 'data' field
-        update_fields = {f"data.{k}": v for k, v in data.items()}
-        update_fields["meta.updated_at"] = datetime.datetime.utcnow()
+        # --- FIX VOOR UPDATEN VAN CLIENT DATA ---
+        # De client stuurt de volledige, bijgewerkte payload (Taskey structuur).
+        # We moeten de MongoDB '_id' behouden. We verwijderen 'id' en '_id'
+        # uit de payload voordat we deze gebruiken als $set.
         
-        result = collection.update_one({'_id': oid}, {'$set': update_fields})
+        update_doc = data.copy()
+        if 'id' in update_doc: del update_doc['id'] # Client stuurt dit mee
+        if '_id' in update_doc: del update_doc['_id'] # Zou niet mogen, maar voor de zekerheid
+        if 'meta' in update_doc: del update_doc['meta'] # Meta wordt apart gezet
+
+        # Voeg updated_at toe aan de meta-informatie
+        update_doc['meta'] = data.get('meta', {})
+        update_doc['meta']['updated_at'] = datetime.datetime.utcnow()
+        update_doc['meta']['client_id'] = client_id # Update of zet de client_id
+
+        # Bij een PUT-operatie wordt het hele document vervangen, behalve _id.
+        # We gebruiken $set op de root van het document.
+        # We updaten nu het hele document, behalve de _id.
+        result = collection.update_one({'_id': oid}, {'$set': update_doc})
         
         if result.matched_count == 0:
             return jsonify({"error": "Not found"}), 404
             
         # Return updated document
         updated_doc = collection.find_one({'_id': oid})
+        
+        # Formatteer voor de client
         updated_doc['id'] = str(updated_doc['_id'])
         del updated_doc['_id']
         log_statistic("update_one", client_id, endpoint_name)
-        return jsonify(updated_doc), 200
+        
+        return jsonify({"id": updated_doc['id'], "data": updated_doc}), 200
 
     elif request.method == 'DELETE':
         result = collection.delete_one({'_id': oid})
