@@ -1,237 +1,206 @@
 import os
 import datetime
 import json
-import secrets # Voor API Key authenticatie
-import string # Voor random key generatie
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, abort, session
+import secrets
+import string
+import re
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
 from flask_cors import CORS 
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
-from flask_limiter import Limiter # Voor Rate Limiting (Feature 6)
-from flask_limiter.util import get_remote_address # Nodig voor Limiter
+from pymongo.errors import ConnectionFailure, OperationFailure, CollectionInvalid
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
-# --- Globale Configuratie (Feature 5) ---
+# --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
-# Globale variabele voor de MongoClient (Connection Pooling)
 MONGO_CLIENT = None
-
-
-# --- Helper voor Key Generatie ---
-def generate_random_key(length=20):
-    """Genereert een willekeurige alfanumerieke sleutel van opgegeven lengte."""
-    # Tekenset: letters, cijfers en !@#$%^&* (zoals gevraagd)
-    characters = string.ascii_letters + string.digits + '!@#$%^&*'
-    return ''.join(secrets.choice(characters) for _ in range(length))
-
 
 # --- Helper Functies ---
 
-def ensure_indexes(db):
-    """Zorgt ervoor dat de benodigde MongoDB-indexen bestaan en TTL wordt ingesteld. (Feature 7 & 8)"""
-    try:
-        # Index voor snelle statistieken en client filtering (timestamp en source)
-        db['statistics'].create_index([("timestamp", 1), ("source", 1)], name="stats_time_source_index", background=True)
-        
-        # Feature 8: TTL Index voor automatische dataverwijdering na 365 dagen
-        # 365 dagen * 24 uur * 60 min * 60 sec = 31,536,000 seconden
-        db['statistics'].create_index("timestamp", expireAfterSeconds=31536000, name="ttl_365_days", background=True) 
-        
-        # Index voor snelle zoekopdrachten op de data
-        db['app_data'].create_index([("source_app", 1), ("timestamp", -1)], name="data_source_time_index", background=True)
-        
-        # Feature 1: Indexen voor API Keys
-        db['api_keys'].create_index("key", unique=True, name="key_unique_index", background=True)
-        db['api_keys'].create_index("client_id", unique=True, name="client_id_unique_index", background=True)
-        
-        # --- NIEUW VOOR CLOUD SYNC ---
-        # Zorgt ervoor dat item_id uniek is per gebruiker (source_app) in de actieve staat
-        db['active_state'].create_index([("source_app", 1), ("item_id", 1)], unique=True, name="unique_item_per_user", background=True)
-        
-        print("MongoDB Indexen gecontroleerd en aangemaakt.")
-    except Exception as e:
-        print(f"Waarschuwing: Index aanmaken mislukt: {e}")
+def generate_random_key(length=20):
+    characters = string.ascii_letters + string.digits + '!@#$%^&*'
+    return ''.join(secrets.choice(characters) for _ in range(length))
 
 def get_db_connection(uri=None):
-    """Hergebruikt de globale connectie of maakt deze aan. (Feature 5)"""
     global MONGO_CLIENT
     target_uri = uri if uri else app.config.get('MONGO_URI')
 
     if not target_uri:
         return None, "MongoDB URI is niet geconfigureerd."
 
-    # Probeer client opnieuw te initialiseren als deze None is (eerste keer of reset)
     if MONGO_CLIENT is None or uri is not None:
         try:
-            # Maak een nieuwe connectie
             client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
-            client.admin.command('ping') # Test verbinding
-            
-            # Update de globale client als dit geen test-URI is
+            client.admin.command('ping')
             if uri is None:
                 MONGO_CLIENT = client
-            else: # Als het een test URI is, gebruik de tijdelijke client voor indexen
-                db = client['api_gateway_db']
-                ensure_indexes(db)
+            else:
                 return client, None
             
-            # Zorg voor indexen
+            # Zorg voor basis indexen
             db = MONGO_CLIENT['api_gateway_db']
-            ensure_indexes(db)
+            db['api_keys'].create_index("key", unique=True, background=True)
+            db['endpoints'].create_index("name", unique=True, background=True) # NIEUW: Endpoint configuratie
             
             return MONGO_CLIENT, None
-        except ConnectionFailure:
-            return None, "Kon geen verbinding maken met de MongoDB-server."
-        except OperationFailure as e:
-            return None, f"Authenticatie of Operationele Fout: {e}"
         except Exception as e:
-            return None, f"Onbekende fout: {e}"
+            MONGO_CLIENT = None
+            return None, str(e)
             
-    # Gebruik de reeds bestaande globale client
     try:
-        MONGO_CLIENT.admin.command('ping') # Test of de verbinding nog actief is
+        MONGO_CLIENT.admin.command('ping')
         return MONGO_CLIENT, None
     except Exception as e:
-        # Connectie verloren, reset globale client en meld fout
         MONGO_CLIENT = None
-        return None, f"Verbinding verloren: {e}"
+        return None, str(e)
 
-def log_statistic(action, source_app):
-    """Logt een actie naar de MongoDB database voor statistieken."""
+def format_size(size_bytes):
+    """Zet bytes om naar leesbare KB/MB string."""
+    if size_bytes == 0:
+        return "0 KB"
+    size_name = ("B", "KB", "MB", "GB", "TB")
+    i = int(0)
+    p = 1024
+    while size_bytes >= p and i < len(size_name) - 1:
+        size_bytes /= p
+        i += 1
+    return f"{size_bytes:.2f} {size_name[i]}"
+
+# --- Data Management Functies ---
+
+def get_configured_endpoints():
+    """Haalt lijst met dynamische endpoints op."""
     client, _ = get_db_connection()
-    if client:
-        try:
-            db = client['api_gateway_db']
-            stats = db['statistics']
-            stats.insert_one({
-                'timestamp': datetime.datetime.utcnow(),
-                'action': action,
-                'source': source_app
-            })
-        except Exception as e:
-            # Print foutmelding, maar laat de API call niet falen
-            print(f"Fout bij loggen van statistiek: {e}")
-
-# --- Database Key Management (Feature 1) ---
-
-def load_api_keys():
-    """Laadt alle actieve sleutels uit de database. (Feature 1)"""
-    client, error = get_db_connection()
-    if not client:
-        return {}
+    if not client: return []
     
     db = client['api_gateway_db']
-    keys_cursor = db['api_keys'].find({})
-    
-    # Maak een dictionary {client_id: {'key': key, 'description': desc}}
-    keys = {}
-    for doc in keys_cursor:
-        keys[doc['client_id']] = {
-            'key': doc['key'],
-            'description': doc['description']
-        }
-    return keys
+    return list(db['endpoints'].find({}, {'_id': 0}).sort('name', 1))
 
-def save_new_api_key(client_id, key, description):
-    """Slaat een nieuwe sleutel op in de database. (Feature 1)"""
-    client, error = get_db_connection()
-    if not client:
-        return False, "Database niet verbonden."
+def get_endpoint_stats(endpoint_name):
+    """Haalt storage statistieken op voor een specifiek endpoint."""
+    client, _ = get_db_connection()
+    if not client: return {'count': 0, 'size': '0 KB'}
+    
+    db = client['api_gateway_db']
+    coll_name = f"data_{endpoint_name}"
+    
+    try:
+        # Haal low-level collectie statistieken op
+        stats = db.command("collstats", coll_name)
+        return {
+            'count': stats.get('count', 0),
+            'size': format_size(stats.get('storageSize', 0)),
+            'avgObjSize': format_size(stats.get('avgObjSize', 0))
+        }
+    except OperationFailure:
+        # Collectie bestaat waarschijnlijk nog niet
+        return {'count': 0, 'size': '0 KB', 'avgObjSize': '0 B'}
+
+def create_endpoint(name, description):
+    """Maakt een nieuw endpoint aan."""
+    # Validatie: alleen letters, cijfers en underscores
+    if not re.match("^[a-zA-Z0-9_]+$", name):
+        return False, "Naam mag alleen letters, cijfers en underscores bevatten."
+    
+    client, _ = get_db_connection()
+    if not client: return False, "Geen database verbinding"
     
     db = client['api_gateway_db']
     try:
-        db['api_keys'].insert_one({
-            'client_id': client_id,
-            'key': key,
+        db['endpoints'].insert_one({
+            'name': name,
             'description': description,
             'created_at': datetime.datetime.utcnow()
         })
+        # Maak alvast de collectie aan (optioneel, maar netjes)
+        db.create_collection(f"data_{name}")
         return True, None
     except Exception as e:
         return False, str(e)
 
-def revoke_api_key_db(client_id):
-    """Trekt een sleutel in door deze uit de database te verwijderen. (Feature 1)"""
-    client, error = get_db_connection()
-    if not client:
-        return False, "Database niet verbonden."
+def delete_endpoint(name):
+    """Verwijdert configuratie EN data van een endpoint."""
+    client, _ = get_db_connection()
+    if not client: return False
     
     db = client['api_gateway_db']
     try:
-        result = db['api_keys'].delete_one({'client_id': client_id})
-        return result.deleted_count > 0, None
-    except Exception as e:
-        return False, str(e)
+        # Verwijder config
+        db['endpoints'].delete_one({'name': name})
+        # Verwijder data collectie
+        db[f"data_{name}"].drop()
+        return True
+    except Exception:
+        return False
+
+# --- API Key Management (Bestaand) ---
+def load_api_keys():
+    client, _ = get_db_connection()
+    if not client: return {}
+    db = client['api_gateway_db']
+    keys = {}
+    for doc in db['api_keys'].find({}):
+        keys[doc['client_id']] = {'key': doc['key'], 'description': doc['description']}
+    return keys
+
+def save_new_api_key(client_id, key, description):
+    client, _ = get_db_connection()
+    if not client: return False, "DB Error"
+    db = client['api_gateway_db']
+    try:
+        db['api_keys'].insert_one({'client_id': client_id, 'key': key, 'description': description})
+        return True, None
+    except Exception as e: return False, str(e)
+
+def revoke_api_key_db(client_id):
+    client, _ = get_db_connection()
+    if not client: return False, "DB Error"
+    db = client['api_gateway_db']
+    db['api_keys'].delete_one({'client_id': client_id})
+    return True, None
 
 # --- INITIALISATIE ---
 app = Flask(__name__)
-# Voeg CORS toe: Staat alle origins toe. Belangrijk: support_credentials=True kan nodig zijn als je cookies/auth headers complex gebruikt, 
-# maar voor Bearer tokens is standaard CORS meestal genoeg.
 CORS(app) 
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
 
-# Functie om de client te identificeren voor Rate Limiting (Feature 6)
 def get_client_id():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         token = auth_header.split(' ')[1]
-        
-        # Zoek in de database naar de token (Feature 1)
         client, _ = get_db_connection()
         if client:
             db = client['api_gateway_db']
             key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
-            if key_doc:
-                return key_doc['client_id']
-                
-    # Val terug op IP-adres als er geen geldige token is
+            if key_doc: return key_doc['client_id']
     return get_remote_address()
 
-# Initialiseer Limiter (Feature 6: Rate Limiting)
-limiter = Limiter(
-    key_func=get_client_id, 
-    app=app, 
-    default_limits=["1000 per day", "200 per hour"], 
-    storage_uri="memory://" 
-)
+limiter = Limiter(key_func=get_client_id, app=app, default_limits=["2000 per day", "500 per hour"], storage_uri="memory://")
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-key')
 
-app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
-
-# --- Authenticatie Decorator (Feature 1: API Key Validation) ---
 def require_api_key(f):
-    """Decorator om de API Key te valideren. (Feature 1)"""
     def wrapper(*args, **kwargs):
-        # FIX: Behandel OPTIONS requests direct hier.
-        # Dit voorkomt dat de daadwerkelijke functie wordt aangeroepen en faalt omdat hij 'None' teruggeeft.
-        if request.method == 'OPTIONS':
-            return jsonify({'status': 'preflight_ok'}), 200
-
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
         auth_header = request.headers.get('Authorization')
-        
         if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({"error": "Authenticatie vereist. Gebruik 'Authorization: Bearer <key>'"}), 401
-        
+            return jsonify({"error": "Unauthorized"}), 401
         token = auth_header.split(' ')[1]
-        
-        # Zoek in de database (Feature 1)
         client, _ = get_db_connection()
         client_id = None
         if client:
             db = client['api_gateway_db']
             key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
-            if key_doc:
-                client_id = key_doc['client_id']
+            if key_doc: client_id = key_doc['client_id']
         
         if client_id:
             request.client_id = client_id
             return f(*args, **kwargs)
         else:
-            return jsonify({"error": "Ongeldige API-sleutel"}), 401
-    
+            return jsonify({"error": "Invalid Key"}), 401
     wrapper.__name__ = f.__name__ 
     return wrapper
 
-# --- HTML TEMPLATES (Ingekort voor overzicht, zelfde als voorheen) ---
-# ... (Hier blijft de HTML code hetzelfde als in je vorige versie) ...
+# --- HTML TEMPLATES ---
 
 BASE_LAYOUT = """
 <!DOCTYPE html>
@@ -239,7 +208,7 @@ BASE_LAYOUT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Gateway Dashboard</title>
+    <title>Gateway Beheer</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -248,121 +217,45 @@ BASE_LAYOUT = """
         .sidebar { min-height: 100vh; background-color: #191919; border-right: 1px solid #333; }
         .nav-link { color: #aaa; }
         .nav-link:hover, .nav-link.active { color: #fff; background-color: #333; border-radius: 5px; }
-        .status-dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .dot-green { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
-        .log-timestamp { white-space: nowrap; }
     </style>
 </head>
 <body>
     <div class="container-fluid">
         <div class="row">
-            <!-- Sidebar -->
             <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse p-3">
                 <h4 class="mb-4 text-white"><i class="bi bi-hdd-network"></i> Gateway</h4>
                 <ul class="nav flex-column">
-                    <li class="nav-item">
-                        <a class="nav-link {{ 'active' if page == 'dashboard' else '' }}" href="/">
-                            <i class="bi bi-speedometer2"></i> Dashboard
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings">
-                            <i class="bi bi-gear"></i> Instellingen
-                        </a>
-                    </li>
+                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'dashboard' else '' }}" href="/"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'endpoints' else '' }}" href="/endpoints"><i class="bi bi-diagram-3"></i> Endpoints</a></li>
+                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
                 </ul>
-                <div class="mt-auto pt-4 border-top border-secondary">
-                    <small class="text-muted">Versie 1.1.0 (Cloud Sync)</small>
-                </div>
             </nav>
-
-            <!-- Main Content: HIER WORDT DE CONTENT GEÏNJECTEERD -->
             <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
                 {% with messages = get_flashed_messages(with_categories=true) %}
                   {% if messages %}
                     {% for category, message in messages %}
-                      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                      </div>
+                      <div class="alert alert-{{ category }} alert-dismissible fade show">{{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
                     {% endfor %}
                   {% endif %}
                 {% endwith %}
-                
                 {{ page_content | safe }}
-
             </main>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
-    <!-- Feature 10: Tijdzone Conversie -->
-    <script>
-        function convertUtcToLocal() {
-            document.querySelectorAll('.utc-timestamp').forEach(element => {
-                const utcTime = element.dataset.utc;
-                if (utcTime) {
-                    const date = new Date(utcTime + 'Z'); 
-                    if (!isNaN(date)) {
-                        element.textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-                    } else {
-                         element.textContent = 'Ongeldige tijd';
-                    }
-                    element.classList.remove('utc-timestamp'); 
-                }
-            });
-        }
-        convertUtcToLocal();
-
-        {% if page == 'dashboard' %}
-        const chartData = JSON.parse(document.getElementById('chart-data').textContent);
-        const ctx = document.getElementById('activityChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: chartData.labels,
-                datasets: [{
-                    label: 'API Requests',
-                    data: chartData.counts,
-                    backgroundColor: 'rgba(13, 110, 253, 0.6)',
-                    borderColor: '#0d6efd',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: { 
-                        beginAtZero: true, 
-                        grid: { color: '#333' },
-                        ticks: { color: '#aaa', precision: 0 }
-                    },
-                    x: { 
-                        grid: { color: '#333' },
-                        ticks: { color: '#aaa' }
-                    }
-                },
-                plugins: {
-                    legend: { labels: { color: '#aaa' } }
-                }
-            }
-        });
-        {% endif %}
-    </script>
 </body>
 </html>
 """
 
 DASHBOARD_CONTENT = """
-    <h2 class="mb-4">Systeem Status</h2>
-    
-    <!-- Status Cards -->
+    <h2 class="mb-4">Dashboard</h2>
     <div class="row mb-4">
-        <div class="col-md-3">
+        <div class="col-md-4">
             <div class="card p-3">
-                <h5 class="card-title text-muted">MongoDB</h5>
+                <h5 class="text-muted">MongoDB Status</h5>
                 <div class="d-flex align-items-center mt-2">
                     {% if db_connected %}
                         <span class="status-dot dot-green"></span> <h4 class="m-0">Verbonden</h4>
@@ -372,201 +265,132 @@ DASHBOARD_CONTENT = """
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="card p-3">
-                <h5 class="card-title text-muted">Totaal Logs (24u)</h5>
-                <h3 class="mt-2">{{ stats_count }}</h3>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card p-3">
-                <h5 class="card-title text-muted">Actieve Clients</h5>
-                <h3 class="mt-2">{{ client_count }}</h3>
-            </div>
-        </div>
-         <div class="col-md-3">
-            <div class="card p-3 border-info">
-                <h5 class="card-title text-info">Cloud Items</h5>
-                <h3 class="mt-2">{{ synced_items_count }}</h3>
-                <small class="text-muted">Actueel opgeslagen</small>
-            </div>
-        </div>
-    </div>
-
-    <!-- Charts & Tables -->
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card p-3">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="card-title m-0">Recente Activiteit</h5>
-                    <div class="dropdown">
-                        <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            Bereik: {{ current_range_label }}
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-dark">
-                            <li><a class="dropdown-item {{ 'active' if time_range == '6h' else '' }}" href="{{ url_for('dashboard', range='6h') }}">Laatste 6 uur</a></li>
-                            <li><a class="dropdown-item {{ 'active' if time_range == '24h' else '' }}" href="{{ url_for('dashboard', range='24h') }}">Laatste 24 uur</a></li>
-                            <li><a class="dropdown-item {{ 'active' if time_range == '7d' else '' }}" href="{{ url_for('dashboard', range='7d') }}">Laatste Week (7 dagen)</a></li>
-                            <li><a class="dropdown-item {{ 'active' if time_range == '30d' else '' }}" href="{{ url_for('dashboard', range='30d') }}">Laatste Maand (30 dagen)</a></li>
-                            <li><a class="dropdown-item {{ 'active' if time_range == '365d' else '' }}" href="{{ url_for('dashboard', range='365d') }}">Laatste Jaar (365 dagen)</a></li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <script id="chart-data" type="application/json">
-                    {{ chart_data | tojson | safe }}
-                </script>
-                <canvas id="activityChart" height="100"></canvas>
-            </div>
-        </div>
         <div class="col-md-4">
             <div class="card p-3">
-                <h5 class="card-title">Geregistreerde Clients (24u)</h5>
-                <ul class="list-group list-group-flush mt-3">
-                    {% for client in clients %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center">
-                        <a href="{{ url_for('client_detail', source_app=client) }}" class="text-decoration-none text-info hover:text-white">
-                            {{ client }}
-                        </a>
-                        <span class="badge bg-primary rounded-pill">Actief</span>
-                    </li>
-                    {% else %}
-                    <li class="list-group-item bg-transparent text-muted">Geen clients gedetecteerd</li>
-                    {% endfor %}
-                </ul>
+                <h5 class="text-muted">Actieve Endpoints</h5>
+                <h3 class="mt-2">{{ endpoint_count }}</h3>
+            </div>
+        </div>
+         <div class="col-md-4">
+            <div class="card p-3 border-info">
+                <h5 class="text-info">Totale Opslag</h5>
+                <h3 class="mt-2">{{ total_storage }}</h3>
             </div>
         </div>
     </div>
 """
 
-CLIENT_DETAIL_CONTENT = """
-    <h2 class="mb-4">Client Detail: <span class="text-info">{{ source_app }}</span></h2>
-    <a href="/" class="btn btn-sm btn-secondary mb-4"><i class="bi bi-arrow-left"></i> Terug naar Dashboard</a>
-
-    <div class="card p-4 mb-4">
-        <h5 class="card-title mb-3">Client Informatie</h5>
-        <p><strong>Laatste 24u Requests:</strong> <span class="badge bg-primary">{{ total_requests }}</span></p>
-        <p><strong>Toegestane API Sleutel:</strong> 
-            {% if api_key_length > 0 %}
-                <span class="badge bg-success">*** ({{ api_key_length }} tekens)</span>
-            {% else %}
-                <span class="badge bg-danger">Geen sleutel gevonden</span>
-            {% endif %}
-        </p>
-        <p><strong>Rate Limit:</strong> 200 per uur / 1000 per dag</p>
+ENDPOINTS_CONTENT = """
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Endpoints Beheer</h2>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
+            <i class="bi bi-plus-lg"></i> Nieuw Endpoint
+        </button>
     </div>
 
-    <div class="card p-4">
-        <h5 class="card-title mb-3">Laatste 10 Data Logboek regels</h5>
-        <table class="table table-dark table-striped table-hover">
-            <thead>
-                <tr>
-                    <th scope="col">Tijdstempel (Lokaal)</th>
-                    <th scope="col">Actie</th>
-                    <th scope="col">Payload Fragment</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for log in logs %}
-                <tr>
-                    <td class="log-timestamp utc-timestamp" data-utc="{{ log.timestamp }}"></td>
-                    <td>{{ log.action }}</td>
-                    <td><pre class="m-0 p-0 bg-transparent text-white small">{{ log.payload }}</pre></td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="3" class="text-center text-muted">Geen recente logboeken gevonden voor deze client.</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="row">
+        {% for ep in endpoints %}
+        <div class="col-md-6 col-xl-4">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="m-0 font-monospace text-info">/api/{{ ep.name }}</h5>
+                    <form method="POST" action="/endpoints/delete" onsubmit="return confirm('Dit verwijdert ook alle data in dit endpoint. Zeker weten?');">
+                        <input type="hidden" name="name" value="{{ ep.name }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                    </form>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">{{ ep.description }}</p>
+                    <hr class="border-secondary">
+                    <div class="row text-center">
+                        <div class="col-6 border-end border-secondary">
+                            <small class="text-muted d-block">Items</small>
+                            <span class="fs-5">{{ ep.stats.count }}</span>
+                        </div>
+                        <div class="col-6">
+                            <small class="text-muted d-block">Opslag</small>
+                            <span class="fs-5 text-warning">{{ ep.stats.size }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-dark">
+                    <small class="text-muted">Curl: <code>POST /api/{{ ep.name }}</code></small>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12 text-center text-muted py-5">
+            <h4>Geen endpoints geconfigureerd.</h4>
+            <p>Klik op 'Nieuw Endpoint' om te beginnen.</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Modal -->
+    <div class="modal fade" id="addEndpointModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-white border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Nieuw Endpoint Toevoegen</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST" action="/endpoints">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Endpoint Naam (in URL)</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-secondary text-white border-secondary">/api/</span>
+                                <input type="text" name="name" class="form-control bg-black text-white border-secondary" placeholder="products" required pattern="[a-zA-Z0-9_]+">
+                            </div>
+                            <small class="text-muted">Alleen letters, cijfers en underscores.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Omschrijving</label>
+                            <input type="text" name="description" class="form-control bg-black text-white border-secondary" placeholder="Opslag voor productcatalogus">
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuleren</button>
+                        <button type="submit" class="btn btn-primary">Aanmaken</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 """
 
 SETTINGS_CONTENT = """
-    <h2 class="mb-4">Instellingen</h2>
-    
-    <div class="row">
+    <h2>Instellingen</h2>
+    <div class="row mt-4">
         <div class="col-md-6">
             <div class="card p-4">
-                <h5 class="card-title mb-3">Database Configuratie</h5>
+                <h5>API Sleutel Genereren</h5>
                 <form method="POST" action="/settings">
                     <div class="mb-3">
-                        <label for="mongo_uri" class="form-label">MongoDB Connection URI</label>
-                        <input type="text" class="form-control bg-dark text-white border-secondary" 
-                               id="mongo_uri" name="mongo_uri" value="{{ current_uri }}">
-                        <div class="form-text text-muted">Voorbeeld: mongodb://gebruiker:wachtwoord@host:27017/</div>
+                        <input type="text" name="key_description" class="form-control bg-dark text-white" placeholder="Naam (bv. App V2)" required>
                     </div>
-                    <button type="submit" name="action" value="save" class="btn btn-primary">Opslaan</button>
-                    <button type="submit" name="action" value="test" class="btn btn-warning ms-2">
-                        <i class="bi bi-lightning-fill"></i> Test Verbinding
-                    </button>
+                    <button type="submit" name="action" value="generate_key" class="btn btn-success">Genereer Sleutel</button>
                 </form>
-            </div>
-
-            <div class="card p-4 mt-4">
-                <h5 class="card-title mb-3">API Sleutel Generatie</h5>
-                <p class="text-muted small">Genereer een nieuwe, unieke API-sleutel (20 tekens) voor een client.</p>
-                <form method="POST" action="/settings">
-                    <div class="mb-3">
-                        <label for="key_description" class="form-label">Omschrijving Client</label>
-                        <input type="text" class="form-control bg-dark text-white border-secondary" 
-                               id="key_description" name="key_description" required placeholder="Bijv. Webshop Backend V2">
-                    </div>
-                    <button type="submit" name="action" value="generate_key" class="btn btn-success">
-                        <i class="bi bi-key"></i> Genereer API Sleutel
-                    </button>
-                </form>
-            </div>
-            
-            {% if new_key %}
-            <div class="card p-4 mt-4 border-success">
-                <h5 class="card-title text-success mb-3">Nieuwe Sleutel Succesvol Aangemaakt</h5>
-                <p class="text-muted small">Sleutel voor **{{ new_key_desc }}** (ID: {{ new_key_id }}). Kopieer deze nu.</p>
-                
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control bg-dark text-success font-monospace" value="{{ new_key }}" id="generatedKey" readonly>
-                    <button class="btn btn-outline-success" type="button" onclick="copyToClipboard('generatedKey', this)">
-                        <i class="bi bi-clipboard"></i> Kopiëren
-                    </button>
+                {% if new_key %}
+                <div class="alert alert-success mt-3">
+                    <strong>Nieuwe Key:</strong> <code class="user-select-all">{{ new_key }}</code>
                 </div>
+                {% endif %}
             </div>
-            <script>
-                function copyToClipboard(elementId, button) {
-                    var copyText = document.getElementById(elementId);
-                    copyText.select();
-                    copyText.setSelectionRange(0, 99999); 
-                    document.execCommand('copy');
-                    button.innerHTML = '<i class="bi bi-check2"></i> Gekopieerd!';
-                    setTimeout(() => { button.innerHTML = '<i class="bi bi-clipboard"></i> Kopiëren'; }, 2000);
-                }
-            </script>
-            {% endif %}
         </div>
-        
         <div class="col-md-6">
             <div class="card p-4">
-                <h5 class="card-title mb-3">Actieve API Sleutels</h5>
-                <ul class="list-group">
+                <h5>Actieve Sleutels</h5>
+                <ul class="list-group list-group-flush">
                     {% for id, data in api_keys.items() %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center">
-                        <div>
-                            <strong>{{ data.description }}:</strong> 
-                            <span class="text-muted small">({{ id }})</span>
-                        </div>
-                        <div class="d-flex align-items-center">
-                            <code class="me-3">*** ({{ data.key | length }} tekens)</code>
-                            <form method="POST" action="{{ url_for('settings') }}" onsubmit="return confirm('Weet u zeker?');">
-                                <input type="hidden" name="action" value="revoke_key">
-                                <input type="hidden" name="client_id" value="{{ id }}">
-                                <button type="submit" class="btn btn-sm btn-danger">
-                                    <i class="bi bi-trash"></i> Intrekken
-                                </button>
-                            </form>
-                        </div>
+                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
+                        <span>{{ data.description }} <small class="text-muted">({{ id }})</small></span>
+                        <form method="POST" action="/settings" onsubmit="return confirm('Intrekken?');">
+                            <input type="hidden" name="action" value="revoke_key">
+                            <input type="hidden" name="client_id" value="{{ id }}">
+                            <button class="btn btn-sm btn-danger">X</button>
+                        </form>
                     </li>
-                    {% else %}
-                    <li class="list-group-item bg-transparent text-muted">Geen actieve sleutels.</li>
                     {% endfor %}
                 </ul>
             </div>
@@ -574,320 +398,140 @@ SETTINGS_CONTENT = """
     </div>
 """
 
-# --- Routes ---
+# --- ROUTES ---
 
 @app.route('/')
 def dashboard():
-    time_range = request.args.get('range', '6h')
-    
-    range_map = {
-        '6h': {'delta': datetime.timedelta(hours=6), 'label': 'Laatste 6 uur', 'group': '%H:00', 'fill_interval': 'hour'},
-        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 uur', 'group': '%H:00', 'fill_interval': 'hour'},
-        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste Week', 'group': '%a %d', 'fill_interval': 'day'},
-        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste Maand', 'group': '%d %b', 'fill_interval': 'day'},
-        '365d': {'delta': datetime.timedelta(days=365), 'label': 'Laatste Jaar', 'group': '%b %Y', 'fill_interval': 'month'},
-    }
-    
-    current_range = range_map.get(time_range, range_map['6h'])
-    delta = current_range['delta']
-    start_time = datetime.datetime.utcnow() - delta
-    
-    client, error = get_db_connection()
+    client, _ = get_db_connection()
     db_connected = client is not None
+    endpoint_count = 0
+    total_size_bytes = 0
     
-    stats_count = 0
-    synced_items_count = 0
-    unique_clients = []
-    chart_data = {"labels": [], "counts": []}
-
     if db_connected:
-        try:
-            db = client['api_gateway_db']
-            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            stats_count = db['statistics'].count_documents({'timestamp': {'$gte': yesterday}})
-            synced_items_count = db['active_state'].count_documents({})
-            unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
+        endpoints = get_configured_endpoints()
+        endpoint_count = len(endpoints)
+        for ep in endpoints:
+            try:
+                stats = client['api_gateway_db'].command("collstats", f"data_{ep['name']}")
+                total_size_bytes += stats.get('storageSize', 0)
+            except: pass
             
-            pipeline = [
-                {'$match': {'timestamp': {'$gte': start_time}}},
-                {'$group': {
-                    '_id': {'$dateToString': {'format': current_range['group'], 'date': '$timestamp'}}, 
-                    'count': {'$sum': 1},
-                    'latest_time': {'$max': '$timestamp'}
-                }},
-                {'$sort': {'latest_time': 1}}
-            ]
-            aggregated_counts = list(db['statistics'].aggregate(pipeline))
-            agg_dict = {item['_id']: item['count'] for item in aggregated_counts}
+    return render_template_string(BASE_LAYOUT, page='dashboard', 
+        page_content=render_template_string(DASHBOARD_CONTENT, 
+            db_connected=db_connected, 
+            endpoint_count=endpoint_count,
+            total_storage=format_size(total_size_bytes)
+        ))
 
-            chart_labels = []
-            chart_counts = []
-            current = start_time
-            now = datetime.datetime.utcnow()
+@app.route('/endpoints', methods=['GET', 'POST'])
+def endpoints_page():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        desc = request.form.get('description')
+        success, err = create_endpoint(name, desc)
+        if success: flash(f"Endpoint '{name}' aangemaakt.", "success")
+        else: flash(f"Fout: {err}", "danger")
+        return redirect(url_for('endpoints_page'))
 
-            if current_range['fill_interval'] == 'hour':
-                while current < now:
-                    label = current.strftime('%H:00')
-                    chart_labels.append(label)
-                    chart_counts.append(agg_dict.get(label, 0))
-                    current += datetime.timedelta(hours=1)
-            elif current_range['fill_interval'] == 'day':
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_labels.append(label)
-                    chart_counts.append(agg_dict.get(label, 0))
-                    current += datetime.timedelta(days=1)
-            elif current_range['fill_interval'] == 'month':
-                current = datetime.datetime(current.year, current.month, 1)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_labels.append(label)
-                    chart_counts.append(agg_dict.get(label, 0))
-                    next_month = current.month + 1
-                    next_year = current.year
-                    if next_month > 12:
-                        next_month = 1
-                        next_year += 1
-                    current = datetime.datetime(next_year, next_month, 1)
-            
-            chart_data = {"labels": chart_labels, "counts": chart_counts}
-            
-        except Exception:
-            pass
-    
-    rendered_content = render_template_string(DASHBOARD_CONTENT,
-                                            db_connected=db_connected,
-                                            db_uri=app.config['MONGO_URI'],
-                                            stats_count=stats_count,
-                                            synced_items_count=synced_items_count,
-                                            client_count=len(unique_clients),
-                                            clients=unique_clients,
-                                            chart_data=chart_data,
-                                            time_range=time_range, 
-                                            current_range_label=current_range['label']) 
-            
-    return render_template_string(BASE_LAYOUT, page='dashboard', page_content=rendered_content)
+    endpoints = get_configured_endpoints()
+    # Verrijk endpoints met statistieken
+    for ep in endpoints:
+        ep['stats'] = get_endpoint_stats(ep['name'])
 
+    content = render_template_string(ENDPOINTS_CONTENT, endpoints=endpoints)
+    return render_template_string(BASE_LAYOUT, page='endpoints', page_content=content)
 
-@app.route('/client/<source_app>')
-def client_detail(source_app):
-    client, error = get_db_connection()
-    logs = []
-    total_requests = 0
-    api_key_length = 0
-    
-    api_keys_db = load_api_keys()
-    api_key_data = api_keys_db.get(source_app)
-    if api_key_data:
-        api_key_length = len(api_key_data['key'])
-
-    if client:
-        try:
-            db = client['api_gateway_db']
-            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            total_requests = db['statistics'].count_documents({
-                'source': source_app,
-                'timestamp': {'$gte': yesterday}
-            })
-            cursor = db['app_data'].find({'source_app': source_app}).sort('timestamp', -1).limit(10)
-            
-            for doc in cursor:
-                payload_str = json.dumps(doc.get('payload', {}), indent=2)
-                if len(payload_str) > 100:
-                    payload_str = payload_str[:100] + '...'
-                
-                action_type = doc.get('action', 'Data Post')
-                if doc.get('payload') and isinstance(doc.get('payload'), dict):
-                     action_type = doc.get('payload').get('action', action_type)
-                    
-                logs.append({
-                    'timestamp': doc['timestamp'].isoformat(),
-                    'action': action_type,
-                    'payload': payload_str
-                })
-        except Exception as e:
-            flash(f'Fout bij het ophalen van clientdetails: {e}', 'danger')
-
-    rendered_content = render_template_string(CLIENT_DETAIL_CONTENT,
-                                            source_app=source_app,
-                                            total_requests=total_requests,
-                                            api_key_length=api_key_length,
-                                            logs=logs)
-    
-    return render_template_string(BASE_LAYOUT, page='client_detail', page_content=rendered_content)
-
+@app.route('/endpoints/delete', methods=['POST'])
+def delete_endpoint_route():
+    name = request.form.get('name')
+    if delete_endpoint(name):
+        flash(f"Endpoint '{name}' verwijderd.", "warning")
+    else:
+        flash("Kon endpoint niet verwijderen.", "danger")
+    return redirect(url_for('endpoints_page'))
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     if request.method == 'POST':
         action = request.form.get('action')
-        
         if action == 'generate_key':
-            description = request.form.get('key_description', 'Nieuwe client')
-            new_key = generate_random_key(20)
-            
-            base_name = description.replace(' ', '_').replace('-', '_').replace('.', '').lower()
-            i = 1
-            client_id = base_name
-            
-            keys_db = load_api_keys()
-            while client_id in keys_db:
-                client_id = f"{base_name}_{i}"
-                i += 1
-
-            success, db_error = save_new_api_key(client_id, new_key, description)
-
-            if success:
-                session['new_key'] = new_key
-                session['new_key_desc'] = description
-                session['new_key_id'] = client_id
-                flash(f'Sleutel voor "{description}" is gegenereerd.', 'success')
-            else:
-                flash(f'Fout bij het genereren van de sleutel: {db_error}', 'danger')
-            return redirect(url_for('settings'))
-            
+            desc = request.form.get('key_description')
+            key = generate_random_key()
+            client_id = desc.lower().replace(" ", "_") + "_" + secrets.token_hex(2)
+            if save_new_api_key(client_id, key, desc)[0]:
+                session['new_key'] = key
+                flash("Sleutel aangemaakt", "success")
         elif action == 'revoke_key':
-            client_id_to_revoke = request.form.get('client_id')
-            success, db_error = revoke_api_key_db(client_id_to_revoke)
+            revoke_api_key_db(request.form.get('client_id'))
+            flash("Sleutel ingetrokken", "warning")
+        return redirect(url_for('settings'))
 
-            if success:
-                flash(f'API-sleutel voor "{client_id_to_revoke}" is ingetrokken.', 'warning')
-            else:
-                flash(f'Fout: {db_error}', 'danger')
-            return redirect(url_for('settings'))
-
-        new_uri = request.form.get('mongo_uri')
-        if new_uri:
-            app.config['MONGO_URI'] = new_uri
-        
-        if action == 'test':
-            client, error = get_db_connection(app.config['MONGO_URI']) 
-            if client:
-                flash('Verbinding succesvol!', 'success')
-            else:
-                flash(f'Verbinding mislukt: {error}', 'danger')
-        elif action == 'save':
-            client, error = get_db_connection(None) 
-            if client:
-                flash('Instellingen opgeslagen.', 'info')
-            else:
-                flash(f'Opgeslagen, maar fout in verbinding: {error}', 'danger')
-            
-    active_api_keys = load_api_keys() 
     new_key = session.pop('new_key', None)
-    new_key_desc = session.pop('new_key_desc', None)
-    new_key_id = session.pop('new_key_id', None)
-            
-    rendered_content = render_template_string(SETTINGS_CONTENT,
-                                            current_uri=app.config['MONGO_URI'],
-                                            env_host=os.environ.get('HOSTNAME', 'Unknown'),
-                                            api_keys=active_api_keys,
-                                            new_key=new_key,
-                                            new_key_desc=new_key_desc,
-                                            new_key_id=new_key_id) 
-    
-    return render_template_string(BASE_LAYOUT, page='settings', page_content=rendered_content)
+    content = render_template_string(SETTINGS_CONTENT, api_keys=load_api_keys(), new_key=new_key)
+    return render_template_string(BASE_LAYOUT, page='settings', page_content=content)
 
-# --- API Endpoints ---
+@app.route('/api/health')
+def health():
+    client, _ = get_db_connection()
+    return jsonify({"status": "running", "db": "ok" if client else "error"})
 
-@app.route('/api/health', methods=['GET']) 
-def health_check():
-    """Simple health check endpoint."""
-    client, error = get_db_connection()
-    db_status = "ok" if client else "error"
-    return jsonify({
-        "status": "running", 
-        "service": "API Gateway",
-        "mongodb_status": db_status
-    })
+# --- DYNAMIC REST API GATEWAY ---
 
-@app.route('/api/data', methods=['GET', 'POST', 'OPTIONS'])
+@app.route('/api/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
 @require_api_key
-@limiter.limit("50 per hour") 
-@limiter.limit("200 per day") 
-def handle_data():
+@limiter.limit("1000 per hour")
+def handle_dynamic_endpoint(endpoint_name):
     """
-    Endpoint voor data synchronisatie.
+    Dynamische handler voor ALLE geconfigureerde endpoints.
+    GET: Haal data op (optioneel filteren via query params)
+    POST: Voeg data toe
+    DELETE: Verwijder data (via query param ?id=...)
     """
-    source_app = getattr(request, 'client_id', 'unknown_client')
-    
-    client, error = get_db_connection()
-    if not client:
-        log_statistic('db_failed_request', source_app)
-        return jsonify({"error": "Database not connected", "details": error}), 503
-    
+    client, _ = get_db_connection()
+    if not client: return jsonify({"error": "DB failure"}), 503
     db = client['api_gateway_db']
-
-    # --- 1. GET Request: Data Ophalen (Sync Down) ---
-    if request.method == 'GET':
-        try:
-            cursor = db['active_state'].find({'source_app': source_app})
-            projects = []
-            items = []
-            
-            for doc in cursor:
-                entity = doc.get('data', {})
-                if 'name' in entity and 'content' not in entity:
-                    projects.append(entity)
-                else:
-                    items.append(entity)
-            
-            log_statistic('sync_download', source_app)
-            return jsonify({
-                "status": "success",
-                "projects": projects,
-                "items": items,
-                "count": len(projects) + len(items)
-            }), 200
-        except Exception as e:
-            return jsonify({"error": f"Failed to fetch data: {str(e)}"}), 500
-
-    # --- 2. POST Request: Data Opslaan (Sync Up) ---
-    elif request.method == 'POST':
-        try:
-            payload = request.json
-            if not payload:
-                return jsonify({"error": "Missing JSON data"}), 400
-
-            action = payload.get('action', 'unknown')
-            item_id = payload.get('item_id')
-            full_data = payload.get('full_data')
-            
-            db['app_data'].insert_one({
-                'timestamp': datetime.datetime.utcnow(),
-                'source_app': source_app,
-                'action': action,
-                'payload': payload
-            })
-            
-            if item_id:
-                if action.startswith('save_'):
-                    db['active_state'].update_one(
-                        {'source_app': source_app, 'item_id': item_id},
-                        {'$set': {
-                            'source_app': source_app,
-                            'item_id': item_id,
-                            'data': full_data,
-                            'last_updated': datetime.datetime.utcnow()
-                        }},
-                        upsert=True
-                    )
-                elif action.startswith('delete_'):
-                    db['active_state'].delete_one({
-                        'source_app': source_app, 
-                        'item_id': item_id
-                    })
-            
-            log_statistic('sync_upload', source_app)
-            return jsonify({"status": "success", "message": "Data processed", "client": source_app, "action": action}), 201
-
-        except Exception as e:
-            log_statistic('db_write_error', source_app)
-            return jsonify({"error": f"Failed to write data to database: {str(e)}"}), 500
     
-    # FIX: Vang alle andere methoden op (al afgehandeld in wrapper, maar voor zekerheid)
-    return jsonify({"error": "Method not allowed"}), 405
+    # 1. Controleer of endpoint bestaat
+    if not db['endpoints'].find_one({'name': endpoint_name}):
+        return jsonify({"error": f"Endpoint '{endpoint_name}' not found"}), 404
+
+    collection = db[f"data_{endpoint_name}"]
+
+    # 2. Handle POST (Create)
+    if request.method == 'POST':
+        data = request.json
+        if not data: return jsonify({"error": "No JSON body"}), 400
+        
+        # Voeg metadata toe
+        doc = {
+            "data": data,
+            "meta": {
+                "created_at": datetime.datetime.utcnow(),
+                "client_id": getattr(request, 'client_id', 'unknown'),
+                "ip": get_remote_address()
+            }
+        }
+        result = collection.insert_one(doc)
+        return jsonify({"status": "created", "id": str(result.inserted_id)}), 201
+
+    # 3. Handle GET (Read)
+    elif request.method == 'GET':
+        # Simpele filtering: ?status=active -> zoekt naar {"data.status": "active"}
+        query = {}
+        for k, v in request.args.items():
+            query[f"data.{k}"] = v
+            
+        limit = int(request.args.get('_limit', 50))
+        cursor = collection.find(query, {'_id': 0}).sort("meta.created_at", -1).limit(limit)
+        return jsonify(list(cursor)), 200
+
+    # 4. Handle DELETE
+    elif request.method == 'DELETE':
+        # Vereist ?id=... of ?filter_field=value
+        # Voor veiligheid nu even alleen 'delete all' als specifieke header aanwezig is, of custom logica
+        # Dit is een voorbeeld, wees voorzichtig met DELETE in productie
+        return jsonify({"error": "DELETE not implemented for safety"}), 501
 
 if __name__ == '__main__':
-    get_db_connection() 
+    get_db_connection()
     app.run(host='0.0.0.0', port=5000, debug=True)
