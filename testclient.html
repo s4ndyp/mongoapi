@@ -5,79 +5,126 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dynamic API Test</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .json-viewer {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .highlight-post {
+            color: #4ade80; /* Groen */
+        }
+        .highlight-get {
+            color: #6366f1; /* Indigo */
+        }
+    </style>
 </head>
 <body class="bg-slate-900 text-slate-100 p-8 font-sans">
-    <div class="max-w-3xl mx-auto">
+    <div class="max-w-4xl mx-auto">
         <h1 class="text-3xl font-bold mb-6 text-blue-400">Dynamic API Tester</h1>
         
+        <p class="text-slate-400 mb-6 border-b border-slate-700 pb-3">
+            Test de verbinding met de Taskey MongoAPI Gateway. Voer je JWT-token of API Key in voor authenticatie.
+            De `app.py` API verwacht nu een responsformaat van `{ "id": "...", "data": {...} }` voor documenten.
+        </p>
+
         <!-- Configuratie -->
-        <div class="bg-slate-800 p-6 rounded-lg mb-6 border border-slate-700">
-            <div class="grid grid-cols-2 gap-4">
+        <div class="bg-slate-800 p-6 rounded-xl mb-6 border border-slate-700 shadow-xl">
+            <h2 class="text-xl font-semibold mb-4 text-white">Configuratie</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm text-slate-400 mb-1">Base URL</label>
-                    <input type="text" id="baseUrl" value="http://localhost:5000" class="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
+                    <label class="block text-sm text-slate-400 mb-1">Base URL (zonder /api)</label>
+                    <input type="text" id="baseUrl" value="http://mongoapi:8080" 
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div>
-                    <label class="block text-sm text-slate-400 mb-1">API Key</label>
-                    <input type="text" id="apiKey" placeholder="Bearer Token..." class="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
+                    <label class="block text-sm text-slate-400 mb-1">Bearer Token (API Key / JWT)</label>
+                    <input type="text" id="apiKey" placeholder="Voer hier het Bearer Token in..." 
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:ring-blue-500 focus:border-blue-500">
                 </div>
             </div>
         </div>
 
         <!-- Request Builder -->
-        <div class="bg-slate-800 p-6 rounded-lg mb-6 border border-slate-700">
-            <h2 class="text-xl font-semibold mb-4">Request Maken</h2>
+        <div class="bg-slate-800 p-6 rounded-xl mb-6 border border-slate-700 shadow-xl">
+            <h2 class="text-xl font-semibold mb-4 text-white">Request Maken</h2>
             
-            <div class="flex gap-4 mb-4">
-                <select id="method" class="bg-slate-900 border border-slate-600 rounded p-2 text-white font-bold w-32">
+            <div class="flex flex-wrap gap-4 mb-4 items-end">
+                <select id="method" class="bg-slate-900 border border-slate-600 rounded-lg p-3 text-white font-bold w-24 flex-shrink-0">
                     <option value="GET">GET</option>
                     <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
                 </select>
-                <div class="flex-1 flex items-center bg-slate-900 border border-slate-600 rounded px-3">
-                    <span class="text-slate-400">/api/</span>
-                    <input type="text" id="endpoint" placeholder="products (moet bestaan in dashboard!)" class="bg-transparent w-full p-2 text-white focus:outline-none">
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-sm text-slate-400 mb-1">Endpoint / ID</label>
+                    <div class="flex items-center bg-slate-900 border border-slate-600 rounded-lg px-3">
+                        <span class="text-slate-400">/api/</span>
+                        <input type="text" id="endpoint" placeholder="items/ID of projects?projectId=..." 
+                            class="bg-transparent w-full p-2 text-white focus:outline-none">
+                    </div>
                 </div>
             </div>
 
             <div id="payloadContainer" class="hidden mb-4">
-                <label class="block text-sm text-slate-400 mb-1">JSON Payload</label>
-                <textarea id="payload" rows="5" class="w-full bg-slate-900 border border-slate-600 rounded p-2 font-mono text-sm">
+                <label class="block text-sm text-slate-400 mb-2">JSON Payload (Root Document)</label>
+                <textarea id="payload" rows="8" class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 font-mono text-sm">
 {
-  "name": "Nieuw Item",
-  "price": 29.95,
-  "stock": 100
+  "content": "Testtaak vanuit de testclient",
+  "type": "task",
+  "projectId": "vervang_door_echte_id",
+  "list": "inbox",
+  "isComplete": false,
+  "priority": "medium",
+  "labels": ["test", "api"]
 }</textarea>
             </div>
 
-            <button onclick="sendRequest()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-medium">Verstuur Request</button>
+            <button onclick="sendRequest()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-medium shadow-md">Verstuur Request</button>
         </div>
 
         <!-- Response -->
-        <div class="bg-slate-950 p-6 rounded-lg border border-slate-800 font-mono text-sm overflow-x-auto">
-            <div id="status" class="mb-2 font-bold text-slate-500">Klaar voor request...</div>
-            <pre id="response" class="text-green-400"></pre>
+        <div class="bg-slate-950 p-6 rounded-xl border border-slate-800 font-mono text-sm overflow-x-auto shadow-2xl">
+            <div id="status" class="mb-3 font-bold text-slate-500">Klaar voor request...</div>
+            <pre id="response" class="json-viewer text-slate-300"></pre>
         </div>
     </div>
 
     <script>
         document.getElementById('method').addEventListener('change', (e) => {
             const payload = document.getElementById('payloadContainer');
-            if (e.target.value === 'POST') payload.classList.remove('hidden');
-            else payload.classList.add('hidden');
+            const method = e.target.value;
+            
+            if (method === 'POST' || method === 'PUT') {
+                payload.classList.remove('hidden');
+            } else {
+                payload.classList.add('hidden');
+            }
         });
 
+        function formatJson(data) {
+            try {
+                return JSON.stringify(data, null, 2);
+            } catch (e) {
+                return String(data);
+            }
+        }
+
         async function sendRequest() {
-            const baseUrl = document.getElementById('baseUrl').value;
-            const endpoint = document.getElementById('endpoint').value;
-            const apiKey = document.getElementById('apiKey').value;
+            const baseUrl = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
+            const endpoint = document.getElementById('endpoint').value.trim();
+            const apiKey = document.getElementById('apiKey').value.trim();
             const method = document.getElementById('method').value;
             const responseEl = document.getElementById('response');
             const statusEl = document.getElementById('status');
 
-            if(!endpoint) { alert("Vul een endpoint naam in!"); return; }
+            if (!endpoint) { alert("Vul een endpoint naam in (bijv. items of items/ID)!"); return; }
 
+            statusEl.className = "mb-3 font-bold text-yellow-500";
             statusEl.textContent = "Laden...";
             responseEl.textContent = "";
+            
+            // Controleer of de URL al /api bevat
+            const fullUrl = endpoint.startsWith('/api/') ? `${baseUrl}${endpoint}` : `${baseUrl}/api/${endpoint}`;
 
             const headers = {
                 'Authorization': `Bearer ${apiKey}`,
@@ -85,21 +132,81 @@
             };
 
             const options = { method, headers };
-            if (method === 'POST') {
+            if (method === 'POST' || method === 'PUT') {
                 try {
-                    options.body = JSON.stringify(JSON.parse(document.getElementById('payload').value));
+                    // De payload is al de Taskey-structuur (zonder de 'data' wrapper)
+                    options.body = document.getElementById('payload').value;
+                    // Probeer te parsen om te valideren
+                    JSON.parse(options.body);
                 } catch(e) {
-                    alert("Ongeldige JSON!"); return;
+                    statusEl.className = "mb-3 font-bold text-red-500";
+                    statusEl.textContent = "Fout: Ongeldige JSON in payload."; 
+                    responseEl.textContent = e.toString();
+                    return;
                 }
             }
 
             try {
-                const res = await fetch(`${baseUrl}/api/${endpoint}`, options);
-                statusEl.textContent = `Status: ${res.status} ${res.statusText}`;
-                const data = await res.json();
-                responseEl.textContent = JSON.stringify(data, null, 2);
+                const res = await fetch(fullUrl, options);
+                let data = null;
+                
+                // Probeer JSON te parsen als de status niet 204 is (No Content)
+                if (res.status !== 204) {
+                     // Gebruik res.clone() omdat res.json() de stream verbruikt
+                    try {
+                        data = await res.json();
+                    } catch (e) {
+                        data = await res.text();
+                        // Als JSON parsen faalt, toon dan de ruwe tekst
+                        responseEl.textContent = data;
+                        statusEl.className = res.ok ? "mb-3 font-bold text-yellow-500" : "mb-3 font-bold text-red-500";
+                        statusEl.textContent = `Waarschuwing: Geen JSON respons! Status: ${res.status} ${res.statusText}`;
+                        return;
+                    }
+                }
+
+                if (res.ok) {
+                    statusEl.className = method === 'POST' ? "mb-3 font-bold highlight-post" : "mb-3 font-bold highlight-get";
+                    statusEl.textContent = `Succes: ${res.status} ${res.statusText}`;
+
+                    if (data) {
+                        // De nieuwe app.py retourneert {id: ..., data: {...}} voor enkelvoudige documenten en arrays daarvan.
+                        
+                        let displayData;
+                        
+                        if (Array.isArray(data)) {
+                             // Als het een array is, toon de hele array
+                             displayData = data;
+                        } else if (data.id && data.data && Object.keys(data).length === 2) {
+                            // Als het een enkel document is (POST/GET/PUT van een item)
+                            displayData = data;
+                        } else {
+                            // Anders, toon de ruwe JSON
+                            displayData = data;
+                        }
+                        
+                        responseEl.textContent = formatJson(displayData);
+                    } else if (res.status === 204) {
+                         responseEl.textContent = "204 No Content (DELETE succesvol)";
+                    } else {
+                         responseEl.textContent = "Geen data ontvangen.";
+                    }
+                } else {
+                    statusEl.className = "mb-3 font-bold text-red-500";
+                    
+                    let errorMsg = `Fout: ${res.status} ${res.statusText}`;
+                    if (data && data.error) {
+                        errorMsg += ` - ${data.error}`;
+                        responseEl.textContent = formatJson(data);
+                    } else if (typeof data === 'string') {
+                        responseEl.textContent = data;
+                    }
+                    statusEl.textContent = errorMsg;
+                }
+
             } catch (err) {
-                statusEl.textContent = "Netwerk Fout";
+                statusEl.className = "mb-3 font-bold text-red-500";
+                statusEl.textContent = "Netwerk Fout: Kan geen verbinding maken of verzoek is mislukt.";
                 responseEl.textContent = err.toString();
             }
         }
