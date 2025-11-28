@@ -80,7 +80,7 @@ def get_db_connection(uri=None):
         MONGO_CLIENT = None
         return None, str(e)
 
-# --- Logging voor Statistieken (Zorgt dat grafieken werken) ---
+# --- Logging voor Statistieken ---
 def log_statistic(action, source_app, endpoint="default"):
     client, _ = get_db_connection()
     if client:
@@ -104,8 +104,8 @@ def get_configured_endpoints():
     endpoints.append({
         'name': 'data',
         'description': 'Standaard Endpoint (Legacy / app_data)',
-        'system': True,  # Vlag om aan te geven dat dit een systeem endpoint is
-        'created_at': datetime.datetime.min # Altijd bovenaan bij sorteren
+        'system': True,
+        'created_at': datetime.datetime.min
     })
 
     if client:
@@ -113,7 +113,6 @@ def get_configured_endpoints():
         try:
             db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}).sort('name', 1))
             for ep in db_endpoints:
-                # Voeg alleen toe als de naam niet 'data' is (om dubbelingen te voorkomen)
                 if ep.get('name') != 'data':
                     ep['system'] = False
                     endpoints.append(ep)
@@ -125,20 +124,11 @@ def get_configured_endpoints():
 def get_endpoint_stats(endpoint_name):
     client, _ = get_db_connection()
     if not client: return {'count': 0, 'size': '0 KB'}
-    
-    # Slimme selectie van collectienaam:
-    # 'data' -> 'app_data' (legacy collectie)
-    # andere -> 'data_<naam>' (nieuwe structuur)
     coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
-    
     try:
         stats = client['api_gateway_db'].command("collstats", coll_name)
-        return {
-            'count': stats.get('count', 0),
-            'size': format_size(stats.get('storageSize', 0))
-        }
+        return {'count': stats.get('count', 0), 'size': format_size(stats.get('storageSize', 0))}
     except:
-        # Collectie bestaat waarschijnlijk nog niet
         return {'count': 0, 'size': '0 KB'}
 
 def create_endpoint(name, description):
@@ -146,22 +136,18 @@ def create_endpoint(name, description):
         return False, "Naam mag alleen letters, cijfers en underscores bevatten."
     if name == 'data':
         return False, "De naam 'data' is gereserveerd voor het systeem."
-        
     client, _ = get_db_connection()
     if not client: return False, "No DB"
     try:
         client['api_gateway_db']['endpoints'].insert_one({
-            'name': name, 
-            'description': description,
-            'created_at': datetime.datetime.utcnow()
+            'name': name, 'description': description, 'created_at': datetime.datetime.utcnow()
         })
         client['api_gateway_db'].create_collection(f"data_{name}")
         return True, None
     except Exception as e: return False, str(e)
 
 def delete_endpoint(name):
-    if name == 'data': return False # Beveiliging tegen verwijderen systeem endpoint
-    
+    if name == 'data': return False
     client, _ = get_db_connection()
     if not client: return False
     try:
@@ -250,6 +236,7 @@ BASE_LAYOUT = """
         .status-dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .dot-green { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
         .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
+        .log-timestamp { font-family: monospace; color: #88c0d0; }
     </style>
 </head>
 <body>
@@ -263,7 +250,7 @@ BASE_LAYOUT = """
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
                 </ul>
                 <div class="mt-auto pt-4 border-top border-secondary small text-muted">
-                    Versie 2.1 (Dynamic + Legacy)
+                    Versie 2.2 (Full Stats)
                 </div>
             </nav>
             <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
@@ -280,6 +267,20 @@ BASE_LAYOUT = """
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Tijdzone conversie script
+        document.addEventListener("DOMContentLoaded", function() {
+            document.querySelectorAll('.utc-timestamp').forEach(element => {
+                const utcTime = element.dataset.utc;
+                if (utcTime) {
+                    const date = new Date(utcTime + 'Z'); 
+                    if (!isNaN(date)) {
+                        element.textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                    }
+                }
+            });
+        });
+    </script>
     {% if page == 'dashboard' %}
     <script>
         const chartData = JSON.parse(document.getElementById('chart-data').textContent);
@@ -351,9 +352,12 @@ DASHBOARD_CONTENT = """
                             {{ current_range_label }}
                         </button>
                         <ul class="dropdown-menu dropdown-menu-dark">
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='6h') }}">6 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='24h') }}">24 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='7d') }}">7 Dagen</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='6h') }}">Laatste 6 Uur</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='24h') }}">Laatste 24 Uur</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='7d') }}">Laatste Week</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='30d') }}">Laatste Maand</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='365d') }}">Laatste Jaar</a></li>
                         </ul>
                     </div>
                 </div>
@@ -463,13 +467,35 @@ CLIENT_DETAIL_CONTENT = """
         <h2>Client: <span class="text-info">{{ source_app }}</span></h2>
         <a href="/" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Terug</a>
     </div>
+    
+    <!-- Client Stats Summary -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card p-3">
+                <h5 class="text-muted">Requests (Laatste 24u)</h5>
+                <h3 class="mt-2 text-primary">{{ total_requests }}</h3>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card p-3">
+                <h5 class="text-muted">Authenticatie</h5>
+                <div class="mt-2">
+                    {% if has_key %}
+                        <span class="badge bg-success fs-5"><i class="bi bi-key-fill"></i> API Key Actief</span>
+                    {% else %}
+                        <span class="badge bg-danger fs-5"><i class="bi bi-exclamation-triangle-fill"></i> Geen Key</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="card p-4">
         <h5 class="card-title mb-3">Laatste 20 Logregels</h5>
         <table class="table table-dark table-striped table-hover">
             <thead>
                 <tr>
-                    <th>Tijd</th>
+                    <th>Tijd (Lokaal)</th>
                     <th>Actie</th>
                     <th>Endpoint</th>
                 </tr>
@@ -477,7 +503,7 @@ CLIENT_DETAIL_CONTENT = """
             <tbody>
                 {% for log in logs %}
                 <tr>
-                    <td>{{ log.timestamp }}</td>
+                    <td class="utc-timestamp log-timestamp" data-utc="{{ log.timestamp }}"></td>
                     <td>{{ log.action }}</td>
                     <td><span class="badge bg-secondary">{{ log.endpoint }}</span></td>
                 </tr>
@@ -544,11 +570,16 @@ SETTINGS_CONTENT = """
 @app.route('/')
 def dashboard():
     time_range = request.args.get('range', '6h')
+    
+    # Uitgebreide range map met 30d en 365d
     range_map = {
         '6h': {'delta': datetime.timedelta(hours=6), 'label': 'Laatste 6 uur', 'group': '%H:00', 'fill': 'hour'},
         '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 uur', 'group': '%H:00', 'fill': 'hour'},
         '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste Week', 'group': '%a %d', 'fill': 'day'},
+        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste Maand', 'group': '%d %b', 'fill': 'day'},
+        '365d': {'delta': datetime.timedelta(days=365), 'label': 'Laatste Jaar', 'group': '%b %Y', 'fill': 'month'},
     }
+    
     current_range = range_map.get(time_range, range_map['6h'])
     start_time = datetime.datetime.utcnow() - current_range['delta']
     
@@ -566,11 +597,10 @@ def dashboard():
             stats_count = db['statistics'].count_documents({'timestamp': {'$gte': yesterday}})
             unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
             
-            # Totale opslag berekenen van alle endpoints
+            # Totale opslag
             endpoints = get_configured_endpoints()
             for ep in endpoints:
                  try: 
-                    # Correcte collectie naam ophalen
                     coll_name = 'app_data' if ep['name'] == 'data' else f"data_{ep['name']}"
                     s = db.command("collstats", coll_name)
                     total_size += s.get('storageSize', 0)
@@ -591,13 +621,38 @@ def dashboard():
             # Chart vullen (gaten opvullen met 0)
             current = start_time
             now = datetime.datetime.utcnow()
-            while current < now:
-                label = current.strftime(current_range['group'])
-                chart_data['labels'].append(label)
-                chart_data['counts'].append(agg_dict.get(label, 0))
-                current += datetime.timedelta(hours=1 if current_range['fill'] == 'hour' else 24)
+            
+            if current_range['fill'] == 'hour':
+                step = datetime.timedelta(hours=1)
+                while current < now:
+                    label = current.strftime(current_range['group'])
+                    chart_data['labels'].append(label)
+                    chart_data['counts'].append(agg_dict.get(label, 0))
+                    current += step
+            elif current_range['fill'] == 'day':
+                step = datetime.timedelta(days=1)
+                while current < now:
+                    label = current.strftime(current_range['group'])
+                    chart_data['labels'].append(label)
+                    chart_data['counts'].append(agg_dict.get(label, 0))
+                    current += step
+            elif current_range['fill'] == 'month':
+                current = datetime.datetime(current.year, current.month, 1)
+                while current < now:
+                    label = current.strftime(current_range['group'])
+                    chart_data['labels'].append(label)
+                    chart_data['counts'].append(agg_dict.get(label, 0))
+                    # Maand ophogen
+                    nm = current.month + 1
+                    ny = current.year
+                    if nm > 12:
+                        nm = 1
+                        ny += 1
+                    current = datetime.datetime(ny, nm, 1)
                 
-        except Exception: pass
+        except Exception as e:
+            print(f"Chart Error: {e}")
+            pass
             
     content = render_template_string(DASHBOARD_CONTENT,
         db_connected=db_connected, stats_count=stats_count, client_count=len(unique_clients),
@@ -632,15 +687,32 @@ def delete_endpoint_route():
 def client_detail(source_app):
     client, _ = get_db_connection()
     logs = []
+    total_requests = 0
+    has_key = False
+    
     if client:
-        cursor = client['api_gateway_db']['statistics'].find({'source': source_app}).sort('timestamp', -1).limit(20)
+        db = client['api_gateway_db']
+        # Totaal aantal requests (24u)
+        yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        total_requests = db['statistics'].count_documents({'source': source_app, 'timestamp': {'$gte': yesterday}})
+        
+        # Check of client een API key heeft
+        if db['api_keys'].find_one({'client_id': source_app}):
+            has_key = True
+
+        cursor = db['statistics'].find({'source': source_app}).sort('timestamp', -1).limit(20)
         for doc in cursor:
             logs.append({
-                'timestamp': doc['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
+                'timestamp': doc['timestamp'].isoformat(), # Raw ISO voor JS conversie
                 'action': doc.get('action', '-'),
                 'endpoint': doc.get('endpoint', 'general')
             })
-    content = render_template_string(CLIENT_DETAIL_CONTENT, source_app=source_app, logs=logs)
+            
+    content = render_template_string(CLIENT_DETAIL_CONTENT, 
+                                   source_app=source_app, 
+                                   logs=logs,
+                                   total_requests=total_requests,
+                                   has_key=has_key)
     return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -678,11 +750,9 @@ def handle_dynamic_endpoint(endpoint_name):
     if not client: return jsonify({"error": "DB failure"}), 503
     db = client['api_gateway_db']
     
-    # Check configuratie (Behalve voor legacy 'data' endpoint als fallback)
     if endpoint_name != 'data' and not db['endpoints'].find_one({'name': endpoint_name}):
         return jsonify({"error": f"Endpoint '{endpoint_name}' not found"}), 404
 
-    # Bepaal collectie: 'data' -> 'app_data' (legacy), anders 'data_<naam>'
     coll_name = 'app_data' if endpoint_name == 'data' else f"data_{endpoint_name}"
     collection = db[coll_name]
     client_id = getattr(request, 'client_id', 'unknown')
@@ -694,7 +764,7 @@ def handle_dynamic_endpoint(endpoint_name):
             "data": data,
             "meta": {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
         })
-        log_statistic("post_data", client_id, endpoint_name) # LOG VOOR GRAFIEKEN
+        log_statistic("post_data", client_id, endpoint_name)
         return jsonify({"status": "created", "id": str(result.inserted_id)}), 201
 
     elif request.method == 'GET':
@@ -703,7 +773,7 @@ def handle_dynamic_endpoint(endpoint_name):
             if k != '_limit': query[f"data.{k}"] = v
         limit = int(request.args.get('_limit', 50))
         docs = list(collection.find(query, {'_id': 0}).sort("meta.created_at", -1).limit(limit))
-        log_statistic("read_data", client_id, endpoint_name) # LOG VOOR GRAFIEKEN
+        log_statistic("read_data", client_id, endpoint_name)
         return jsonify(docs), 200
 
     return jsonify({"error": "Method not allowed"}), 405
