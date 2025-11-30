@@ -98,6 +98,10 @@ def ensure_indexes(db):
         db['data_items'].create_index([("projectId", 1), ("type", 1)], background=True)
         db['data_projects'].create_index([("name", 1)], background=True)
         
+        # NIEUW: Index op meta.client_id voor snelle filtering per gebruiker
+        db['data_items'].create_index("meta.client_id", background=True)
+        db['data_projects'].create_index("meta.client_id", background=True)
+        
         print("MongoDB Indexen gecontroleerd.")
     except Exception as e:
         print(f"Waarschuwing indexen: {e}")
@@ -1124,6 +1128,9 @@ def handle_dynamic_endpoint(endpoint_name):
             if k != '_limit': 
                 # Query nu direct op root velden (bijv. 'projectId' of 'type')
                 query[k] = v 
+        
+        # --- DATA ISOLATIE: Voeg verplicht filter toe ---
+        query['meta.client_id'] = client_id
             
         limit = int(request.args.get('_limit', 50))
         
@@ -1153,6 +1160,9 @@ def handle_dynamic_endpoint(endpoint_name):
         if not query:
              return jsonify({"error": "DELETE requires query parameters for safety"}), 400
 
+        # --- DATA ISOLATIE: Voeg verplicht filter toe ---
+        query['meta.client_id'] = client_id
+
         result = collection.delete_many(query)
         log_statistic("delete_bulk", client_id, endpoint_name)
         return jsonify({"status": "deleted", "count": result.deleted_count}), 200
@@ -1181,6 +1191,11 @@ def handle_single_document(endpoint_name, doc_id):
         doc = collection.find_one({'_id': oid})
         if not doc: return jsonify({"error": "Not found"}), 404
         
+        # --- DATA ISOLATIE CHECK ---
+        if doc.get('meta', {}).get('client_id') != client_id:
+            # We doen alsof het niet bestaat voor beveiliging, of geven een 403 Forbidden
+            return jsonify({"error": "Not found or access denied"}), 403
+
         doc['id'] = str(doc['_id'])
         del doc['_id']
         log_statistic("read_one", client_id, endpoint_name)
@@ -1203,11 +1218,15 @@ def handle_single_document(endpoint_name, doc_id):
         update_doc['meta']['updated_at'] = datetime.datetime.utcnow()
         update_doc['meta']['client_id'] = client_id # Update of zet de client_id
 
-        # Bij een PUT-operatie wordt het hele document vervangen, behalve _id.
-        result = collection.update_one({'_id': oid}, {'$set': update_doc})
+        # --- DATA ISOLATIE: Update alleen als ID én ClientID matchen ---
+        result = collection.update_one(
+            {'_id': oid, 'meta.client_id': client_id}, 
+            {'$set': update_doc}
+        )
         
         if result.matched_count == 0:
-            return jsonify({"error": "Not found"}), 404
+            # Kan zijn dat doc niet bestaat, OF dat het van iemand anders is
+            return jsonify({"error": "Not found or access denied"}), 404
             
         # Return updated document
         updated_doc = collection.find_one({'_id': oid})
@@ -1220,9 +1239,11 @@ def handle_single_document(endpoint_name, doc_id):
         return jsonify({"id": updated_doc['id'], "data": updated_doc}), 200
 
     elif request.method == 'DELETE':
-        result = collection.delete_one({'_id': oid})
+        # --- DATA ISOLATIE: Delete alleen als ID én ClientID matchen ---
+        result = collection.delete_one({'_id': oid, 'meta.client_id': client_id})
+        
         if result.deleted_count == 0:
-            return jsonify({"error": "Not found"}), 404
+            return jsonify({"error": "Not found or access denied"}), 404
         log_statistic("delete_one", client_id, endpoint_name)
         return jsonify({"status": "deleted"}), 204
 
