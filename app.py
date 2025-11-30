@@ -26,7 +26,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
 # CONFIGURATIE VOOR JWT
 app.config['JWT_SECRET'] = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
-app.config['JWT_EXPIRY_MINUTES'] = 60 * 24 # Token verloopt na 24 uur
+app.config['JWT_EXPIRY_MINUTES'] = 60 * 24 # Standaard fallback (24 uur)
 
 # --- Helper: Wachtwoord Hashing ---
 def hash_password(password):
@@ -38,11 +38,14 @@ def check_password(password, hashed):
     return checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 # --- Helper: JWT Functies ---
-def encode_auth_token(user_id):
-    """Genereert het Auth Token."""
+def encode_auth_token(user_id, expiry_minutes=None):
+    """Genereert het Auth Token. Accepteert optionele specifieke expiry tijd."""
     try:
+        # Gebruik meegegeven tijd of de global default
+        minutes = expiry_minutes if expiry_minutes is not None else app.config['JWT_EXPIRY_MINUTES']
+        
         payload = {
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=app.config['JWT_EXPIRY_MINUTES']),
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes),
             'iat': datetime.datetime.utcnow(),
             'sub': str(user_id) # Subject is de gebruikers ID
         }
@@ -259,8 +262,8 @@ def load_all_users():
     if not client: return []
     try:
         # Haal gebruikers op, zonder password_hash
-        users = list(client['api_gateway_db']['users'].find({}, {'username': 1, 'created_at': 1}))
-        return [{'username': u['username'], 'created_at': u['created_at']} for u in users]
+        users = list(client['api_gateway_db']['users'].find({}, {'username': 1, 'created_at': 1, 'token_validity_minutes': 1}))
+        return [{'username': u['username'], 'created_at': u['created_at'], 'validity': u.get('token_validity_minutes', 1440)} for u in users]
     except Exception as e:
         print(f"Error loading users: {e}")
         return []
@@ -292,12 +295,16 @@ def login_api():
     
     if user and check_password(password, user['password_hash']):
         # Succesvol ingelogd, genereer JWT
-        token = encode_auth_token(user['_id'])
+        # Check of deze gebruiker een specifieke expiry setting heeft
+        user_expiry = user.get('token_validity_minutes', app.config['JWT_EXPIRY_MINUTES'])
+        
+        token = encode_auth_token(user['_id'], user_expiry)
+        
         log_statistic("login_success", username, "auth")
         return jsonify({
             "status": "success", 
             "token": token,
-            "expires_in_minutes": app.config['JWT_EXPIRY_MINUTES']
+            "expires_in_minutes": user_expiry
         }), 200
     else:
         log_statistic("login_failed", username, "auth")
@@ -735,10 +742,22 @@ SETTINGS_CONTENT = """
                 <h5>Nieuwe Gebruiker Aanmaken</h5>
                 <form method="POST" action="/settings">
                     <div class="mb-3">
+                        <label class="form-label text-muted">Naam</label>
                         <input type="text" name="username" class="form-control bg-dark text-white" placeholder="Gebruikersnaam" required>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label text-muted">Wachtwoord</label>
                         <input type="password" name="password" class="form-control bg-dark text-white" placeholder="Wachtwoord" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-muted">Token Geldigheid</label>
+                        <select name="token_validity_minutes" class="form-select bg-dark text-white">
+                            <option value="1440" selected>24 uur</option>
+                            <option value="10080">7 dagen</option>
+                            <option value="44640">31 dagen</option>
+                            <option value="525600">365 dagen</option>
+                        </select>
+                        <div class="form-text text-muted small">Dit geldt voor het eerste token én toekomstige logins.</div>
                     </div>
                     <button type="submit" name="action" value="create_user" class="btn btn-success">Gebruiker Toevoegen</button>
                 </form>
@@ -760,11 +779,17 @@ SETTINGS_CONTENT = """
                 <ul class="list-group list-group-flush">
                     {% for user in active_users %}
                     <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <div>{{ user.username }} <small class="text-muted">(Sinds: <span class="utc-timestamp" data-utc="{{ user.created_at.isoformat() }}"></span>)</small></div>
+                        <div>
+                            {{ user.username }} 
+                            <small class="text-muted d-block" style="font-size: 0.8em">
+                                Sinds: <span class="utc-timestamp" data-utc="{{ user.created_at.isoformat() }}"></span><br>
+                                Token duur: {{ (user.validity / 60) | int }} uur
+                            </small>
+                        </div>
                         <form method="POST" action="/settings" onsubmit="return confirm('Gebruiker \'{{ user.username }}\' verwijderen? Dit verbreekt alle actieve JWTs van deze gebruiker!');">
                             <input type="hidden" name="action" value="delete_user">
                             <input type="hidden" name="username" value="{{ user.username }}">
-                            <button class="btn btn-sm btn-danger">X</button>
+                            <button class="btn btn-sm btn-danger ms-2">X</button>
                         </form>
                     </li>
                     {% else %}
@@ -969,6 +994,8 @@ def settings():
         if action == 'create_user':
             username = request.form.get('username')
             password = request.form.get('password')
+            # Lees de gekozen geldigheidsduur (default 24 uur / 1440 min)
+            token_validity = int(request.form.get('token_validity_minutes', 1440))
             
             if db is None:
                 flash("Fout: Geen DB verbinding.", "danger")
@@ -976,18 +1003,23 @@ def settings():
                 flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
             else:
                 try:
-                    # 1. Gebruiker aanmaken
+                    # 1. Gebruiker aanmaken met token voorkeur
                     result = db['users'].insert_one({
                         'username': username,
                         'password_hash': hash_password(password),
                         'created_at': datetime.datetime.utcnow(),
-                        'role': 'admin' # Standaardrol voor dashboard users
+                        'role': 'admin',
+                        'token_validity_minutes': token_validity # Opslaan van voorkeur
                     })
                     
-                    # 2. JWT genereren voor de nieuwe gebruiker
+                    # 2. JWT genereren voor de nieuwe gebruiker met specifieke expiry
                     new_user_id = result.inserted_id
-                    new_token = encode_auth_token(new_user_id)
+                    new_token = encode_auth_token(new_user_id, token_validity)
                     
+                    # Bereken dagen voor nette weergave in bericht
+                    days = token_validity // 1440
+                    time_msg = f"{days} dagen" if days >= 1 else "24 uur"
+
                     # 3. HTML fragment genereren om de token te tonen en te kopiëren
                     token_html = f"""
                     <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
@@ -998,7 +1030,7 @@ def settings():
                             <i class="bi bi-clipboard"></i> Kopieer Token
                         </button>
                     </div>
-                    <p class="mt-2 small text-muted">Dit token is 24 uur geldig. Gebruik het als 'Bearer Token' in de API Test Client.</p>
+                    <p class="mt-2 small text-muted">Dit token is <b>{time_msg}</b> geldig.</p>
                     """
                     
                     flash(token_html, "success")
