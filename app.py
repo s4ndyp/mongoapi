@@ -4,6 +4,7 @@ import json
 import secrets
 import string
 import re
+from functools import wraps
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
 from flask_cors import CORS 
 from pymongo import MongoClient
@@ -260,7 +261,7 @@ def revoke_api_key_db(client_id):
     client['api_gateway_db']['api_keys'].delete_one({'client_id': client_id})
     return True, None
 
-# --- NIEUWE USER MANAGEMENT FUNCTIES ---
+# --- USER MANAGEMENT FUNCTIES ---
 def load_all_users():
     client, _ = get_db_connection()
     if not client: return []
@@ -299,7 +300,6 @@ def login_api():
     
     if user and check_password(password, user['password_hash']):
         # Succesvol ingelogd, genereer JWT
-        # Check of deze gebruiker een specifieke expiry setting heeft
         user_expiry = user.get('token_validity_minutes', app.config['JWT_EXPIRY_MINUTES'])
         
         token = encode_auth_token(user['_id'], user_expiry)
@@ -338,6 +338,7 @@ def get_client_id():
 limiter = Limiter(key_func=get_client_id, app=app, default_limits=["2000 per day", "500 per hour"], storage_uri="memory://")
 
 def require_auth(f):
+    @wraps(f)
     def wrapper(*args, **kwargs):
         if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
         auth_header = request.headers.get('Authorization')
@@ -380,10 +381,49 @@ def require_auth(f):
             # Zowel JWT als API Key faalt
             return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {jwt_error_detail}"}), 401
         
-    wrapper.__name__ = f.__name__ 
     return wrapper
 
-# --- HTML TEMPLATES ---
+# --- NIEUWE DECORATOR VOOR DASHBOARD AUTHENTICATIE ---
+def require_dashboard_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Controleer of de gebruikersnaam in de sessie staat
+        if 'username' not in session:
+            flash("Log eerst in om het dashboard te bekijken.", "warning")
+            return redirect(url_for('dashboard_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+# ---------------------------------------------------
+
+# --- HTML TEMPLATES (ongewijzigd) ---
+
+LOGIN_CONTENT = """
+    <div class="row justify-content-center pt-5">
+        <div class="col-md-6 col-lg-4">
+            <div class="card p-4 shadow-lg">
+                <h3 class="card-title text-center mb-4 text-white"><i class="bi bi-lock-fill"></i> Dashboard Login</h3>
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                  {% if messages %}
+                    {% for category, message in messages %}
+                      <div class="alert alert-{{ category }}">{{ message | safe }}</div>
+                    {% endfor %}
+                  {% endif %}
+                {% endwith %}
+                <form method="POST" action="{{ url_for('dashboard_login') }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label text-muted">Gebruikersnaam</label>
+                        <input type="text" name="username" id="username" class="form-control bg-dark text-white" required autofocus>
+                    </div>
+                    <div class="mb-4">
+                        <label for="password" class="form-label text-muted">Wachtwoord</label>
+                        <input type="password" name="password" id="password" class="form-control bg-dark text-white" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Log In</button>
+                </form>
+            </div>
+        </div>
+    </div>
+"""
 
 BASE_LAYOUT = """
 <!DOCTYPE html>
@@ -412,6 +452,10 @@ BASE_LAYOUT = """
              min-width: 0; /* Belangrijk voor flex containers */
              height: auto; /* Zodat het invoerveld kan groeien */
         }
+        /* Zorg dat de login pagina het hele scherm vult */
+        {% if page == 'login' %}
+        .container-fluid { height: 100vh; display: flex; align-items: center; justify-content: center; }
+        {% endif %}
     </style>
 </head>
 <body>
@@ -420,7 +464,8 @@ BASE_LAYOUT = """
         style="width: 300px; z-index: 1050; text-align: center;"></div>
 
     <div class="container-fluid">
-        <div class="row">
+        <div class="row w-100">
+            {% if page != 'login' %}
             <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse p-3">
                 <h4 class="mb-4 text-white"><i class="bi bi-hdd-network"></i> Gateway</h4>
                 <ul class="nav flex-column">
@@ -429,10 +474,17 @@ BASE_LAYOUT = """
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
                 </ul>
                 <div class="mt-auto pt-4 border-top border-secondary small text-muted">
-                    Versie 2.2 (Full Stats)
+                    Ingelogd als: <strong class="text-white">{{ session.get('username', 'Gast') }}</strong>
+                    <div class="mt-2">
+                        <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
+                    </div>
+                    <div class="mt-4">Versie 2.2 (Full Stats)</div>
                 </div>
             </nav>
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
+            {% endif %}
+            
+            <main class="{{ 'col-12' if page == 'login' else 'col-md-9 ms-sm-auto col-lg-10' }} px-md-4 py-4">
+                {% if page != 'login' %}
                 {% with messages = get_flashed_messages(with_categories=true) %}
                   {% if messages %}
                     {% for category, message in messages %}
@@ -440,6 +492,7 @@ BASE_LAYOUT = """
                     {% endfor %}
                   {% endif %}
                 {% endwith %}
+                {% endif %}
                 {{ page_content | safe }}
             </main>
         </div>
@@ -830,9 +883,58 @@ SETTINGS_CONTENT = """
     </div>
 """
 
-# --- ROUTES ---
+# --- DASHBOARD LOGIC (Web Interface Routes) ---
+
+@app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per 60 second", key_func=get_remote_address, error_message="Te veel mislukte loginpogingen. Probeer het over 60 seconden opnieuw.") # NIEUW: Rate Limiting
+def dashboard_login():
+    if 'username' in session:
+        return redirect(url_for('dashboard')) # Al ingelogd
+
+    if request.method == 'POST':
+        client, _ = get_db_connection()
+        if not client: 
+            flash("DB fout: Kan geen verbinding maken.", "danger")
+            return redirect(url_for('dashboard_login'))
+        
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        db = client['api_gateway_db']
+        user = db['users'].find_one({'username': username})
+        
+        if user and check_password(password, user['password_hash']):
+            session['username'] = username
+            flash(f"Succesvol ingelogd als {username}.", "success")
+            return redirect(url_for('dashboard'))
+        else:
+            flash("Ongeldige gebruikersnaam of wachtwoord.", "danger")
+            # Belangrijk: De limiter telt hier automatisch een mislukte POST-poging.
+            return redirect(url_for('dashboard_login'))
+
+    content = render_template_string(LOGIN_CONTENT)
+    # Gebruik een kale layout zonder navigatiebalk voor de loginpagina
+    return render_template_string(BASE_LAYOUT, page='login', page_content=content)
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    """
+    Handler voor Rate Limit Exceeded (HTTP 429).
+    Dit vangt de foutmelding van de Flask-Limiter op en zet deze om naar een
+    gebruikersvriendelijke flash-message op de loginpagina.
+    """
+    # De foutmelding is al in de limiter gedefinieerd: "Te veel mislukte loginpogingen..."
+    flash(str(e.description), "danger")
+    return redirect(url_for('dashboard_login'))
+
+@app.route('/logout')
+def dashboard_logout():
+    session.pop('username', None)
+    flash("Je bent uitgelogd.", "info")
+    return redirect(url_for('dashboard_login'))
 
 @app.route('/')
+@require_dashboard_auth # Nieuwe beveiliging
 def dashboard():
     time_range = request.args.get('range', '6h')
     
@@ -926,6 +1028,7 @@ def dashboard():
     return render_template_string(BASE_LAYOUT, page='dashboard', page_content=content)
 
 @app.route('/endpoints', methods=['GET', 'POST'])
+@require_dashboard_auth # Nieuwe beveiliging
 def endpoints_page():
     if request.method == 'POST':
         name = request.form.get('name')
@@ -942,6 +1045,7 @@ def endpoints_page():
     return render_template_string(BASE_LAYOUT, page='endpoints', page_content=content)
 
 @app.route('/endpoints/delete', methods=['POST'])
+@require_dashboard_auth # Nieuwe beveiliging
 def delete_endpoint_route():
     name = request.form.get('name')
     if delete_endpoint(name): flash(f"Endpoint '{name}' verwijderd.", "warning")
@@ -949,6 +1053,7 @@ def delete_endpoint_route():
     return redirect(url_for('endpoints_page'))
 
 @app.route('/client/<source_app>')
+@require_dashboard_auth # Nieuwe beveiliging
 def client_detail(source_app):
     client, _ = get_db_connection()
     logs = []
@@ -987,6 +1092,7 @@ def client_detail(source_app):
     return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
 
 @app.route('/settings', methods=['GET', 'POST'])
+@require_dashboard_auth # Nieuwe beveiliging
 def settings():
     client, _ = get_db_connection()
     db = client['api_gateway_db'] if client else None
