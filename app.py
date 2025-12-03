@@ -153,32 +153,34 @@ def log_statistic(action, source_app, endpoint="default"):
             print(f"Log error: {e}")
 
 # --- Endpoint Management Functies ---
-def get_configured_endpoints():
+def get_configured_endpoints(tag_filter=None):
     client, _ = get_db_connection()
     endpoints = []
     
     # 1. Voeg het standaard systeem endpoint toe (Legacy support)
+    # Systeem endpoints hebben standaard geen tags, tenzij we dat later implementeren via een override
     endpoints.append({
         'name': 'data',
         'description': 'Standaard Endpoint (Legacy / app_data)',
         'system': True,
+        'tags': ['system'],
         'created_at': datetime.datetime.min
     })
     
-    # Voeg de nieuwe Taskey endpoints toe die nu in de client worden gebruikt
     endpoints.append({
         'name': 'items',
         'description': 'Taskey Items (Taken en Notities)',
         'system': True,
+        'tags': ['system', 'taskey'],
         'created_at': datetime.datetime.min
     })
     endpoints.append({
         'name': 'projects',
         'description': 'Taskey Projecten',
         'system': True,
+        'tags': ['system', 'taskey'],
         'created_at': datetime.datetime.min
     })
-
 
     if client:
         # 2. Voeg dynamische endpoints uit DB toe
@@ -187,11 +189,33 @@ def get_configured_endpoints():
             for ep in db_endpoints:
                 if ep.get('name') not in ['data', 'items', 'projects']: # Filter de nieuwe en oude vaste endpoints
                     ep['system'] = False
+                    # Zorg dat tags altijd een lijst is
+                    ep['tags'] = ep.get('tags', [])
                     endpoints.append(ep)
         except Exception as e:
             print(f"Fout bij ophalen endpoints: {e}")
             
+    # Filteren op tag indien gevraagd
+    if tag_filter:
+        endpoints = [ep for ep in endpoints if tag_filter in ep.get('tags', [])]
+        
     return endpoints
+
+def get_all_unique_tags():
+    """Haalt alle unieke tags op uit de database en de hardcoded endpoints voor de sidebar."""
+    client, _ = get_db_connection()
+    tags = set(['system', 'taskey']) # Start met systeem tags
+    
+    if client:
+        try:
+            # Haal distinct tags op uit de endpoints collectie
+            db_tags = client['api_gateway_db']['endpoints'].distinct("tags")
+            for t in db_tags:
+                tags.add(t)
+        except Exception as e:
+            print(f"Error fetching tags: {e}")
+            
+    return sorted(list(tags))
 
 def get_db_collection_name(endpoint_name):
     """Bepaalt de collectienaam op basis van het endpoint."""
@@ -214,18 +238,49 @@ def get_endpoint_stats(endpoint_name):
     except:
         return {'count': 0, 'size': '0 KB'}
 
-def create_endpoint(name, description):
+def process_tags_string(tags_str):
+    """Zet een comma-separated string om naar een lijst schone tags."""
+    if not tags_str: return []
+    return [t.strip().lower() for t in tags_str.split(',') if t.strip()]
+
+def create_endpoint(name, description, tags_str):
     if not re.match("^[a-zA-Z0-9_]+$", name):
         return False, "Naam mag alleen letters, cijfers en underscores bevatten."
     if name in ['data', 'items', 'projects']:
         return False, f"De naam '{name}' is gereserveerd voor het systeem."
     client, _ = get_db_connection()
     if not client: return False, "No DB"
+    
+    tags = process_tags_string(tags_str)
+    
     try:
         client['api_gateway_db']['endpoints'].insert_one({
-            'name': name, 'description': description, 'created_at': datetime.datetime.utcnow()
+            'name': name, 
+            'description': description, 
+            'tags': tags,
+            'created_at': datetime.datetime.utcnow()
         })
         client['api_gateway_db'].create_collection(get_db_collection_name(name))
+        return True, None
+    except Exception as e: return False, str(e)
+
+def update_endpoint_metadata(name, description, tags_str):
+    """Update de beschrijving en tags van een bestaand endpoint."""
+    if name in ['data', 'items', 'projects']:
+        return False, "Systeem endpoints kunnen niet worden gewijzigd."
+        
+    client, _ = get_db_connection()
+    if not client: return False, "No DB"
+    
+    tags = process_tags_string(tags_str)
+    
+    try:
+        result = client['api_gateway_db']['endpoints'].update_one(
+            {'name': name},
+            {'$set': {'description': description, 'tags': tags}}
+        )
+        if result.matched_count == 0:
+            return False, "Endpoint niet gevonden."
         return True, None
     except Exception as e: return False, str(e)
 
@@ -319,7 +374,6 @@ def login_api():
         }))
         
         # Zet de HTTP-Only Cookie
-        # Secure zou True moeten zijn in productie (HTTPS), nu False voor dev
         response.set_cookie(
             app.config['JWT_COOKIE_NAME'], 
             token, 
@@ -366,7 +420,6 @@ def get_client_id():
                 return user['username'] if user else f"user_{user_id_or_error}"
                 
             # B. Fallback naar API Key check (alleen via header, niet cookie)
-            # We checken alleen keys als het token uit de header kwam, keys in cookies is ongebruikelijk
             if auth_header:
                 key_doc = client['api_gateway_db']['api_keys'].find_one({'key': token}, {'client_id': 1})
                 if key_doc: return key_doc['client_id']
@@ -412,13 +465,11 @@ def require_auth(f):
                 request.client_id = client_id
                 return f(*args, **kwargs)
             except Exception as e:
-                # Mocht de ObjectId uit de token ongeldig zijn of de gebruiker niet bestaan
                 return jsonify({"error": f"Ongeldige JWT Sub (Gebruiker niet gevonden). Detail: {e}"}), 401
         
         # B. Als JWT faalt, probeer Legacy API Key (Alleen als het via Header kwam)
-        # We ondersteunen geen API keys via cookies voor veiligheid/standaardisatie
         if auth_type == "header":
-            jwt_error_detail = user_id_or_error # Dit is de foutmelding (bv. 'Token is verlopen.')
+            jwt_error_detail = user_id_or_error
             client_id = None
             if client:
                 db = client['api_gateway_db']
@@ -432,7 +483,6 @@ def require_auth(f):
             else:
                 return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {jwt_error_detail}"}), 401
         else:
-             # Cookie auth faalde (JWT ongeldig/verlopen)
              return jsonify({"error": f"Sessie verlopen of ongeldig. (Detail: {user_id_or_error})"}), 401
         
     return wrapper
@@ -447,9 +497,18 @@ def require_dashboard_auth(f):
             return redirect(url_for('dashboard_login'))
         return f(*args, **kwargs)
     return decorated_function
+
+# --- CONTEXT PROCESSOR ---
+# Dit zorgt ervoor dat de sidebar tags beschikbaar zijn in alle templates
+@app.context_processor
+def inject_sidebar_data():
+    if request.endpoint and 'static' not in request.endpoint:
+        return dict(all_tags=get_all_unique_tags())
+    return dict()
+
 # ---------------------------------------------------
 
-# --- HTML TEMPLATES (ongewijzigd) ---
+# --- HTML TEMPLATES ---
 
 LOGIN_CONTENT = """
     <div class="row justify-content-center pt-5">
@@ -499,14 +558,24 @@ BASE_LAYOUT = """
         .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
         .log-timestamp { font-family: monospace; color: #88c0d0; }
         .fixed-top { position: fixed; top: 0; }
-        /* FIX VOOR LANGE JWT IN FLASH MESSAGE */
         .jwt-input-fix {
              width: 100%;
-             word-wrap: break-word; /* Kan helpen in sommige browsers */
-             min-width: 0; /* Belangrijk voor flex containers */
-             height: auto; /* Zodat het invoerveld kan groeien */
+             word-wrap: break-word; 
+             min-width: 0; 
+             height: auto; 
         }
-        /* Zorg dat de login pagina het hele scherm vult */
+        .tag-pill {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background-color: #2c3e50;
+            color: #bdc3c7;
+            margin-right: 4px;
+            text-decoration: none;
+        }
+        .tag-pill:hover { background-color: #34495e; color: #fff; }
+        .tag-pill.active { background-color: #0d6efd; color: white; }
+        
         {% if page == 'login' %}
         .container-fluid { height: 100vh; display: flex; align-items: center; justify-content: center; }
         {% endif %}
@@ -522,17 +591,33 @@ BASE_LAYOUT = """
             {% if page != 'login' %}
             <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse p-3">
                 <h4 class="mb-4 text-white"><i class="bi bi-hdd-network"></i> Gateway</h4>
-                <ul class="nav flex-column">
+                <ul class="nav flex-column mb-4">
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'dashboard' else '' }}" href="/"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'endpoints' else '' }}" href="/endpoints"><i class="bi bi-diagram-3"></i> Endpoints</a></li>
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
                 </ul>
+
+                {% if all_tags %}
+                <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-2 text-muted text-uppercase">
+                  <span>Filter op Tag</span>
+                </h6>
+                <div class="px-3">
+                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else '' }}">Alle</a>
+                    {% for tag in all_tags %}
+                        <a href="{{ url_for('endpoints_page', tag=tag) }}" 
+                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag else '' }}">
+                           {{ tag }}
+                        </a>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
                 <div class="mt-auto pt-4 border-top border-secondary small text-muted">
                     Ingelogd als: <strong class="text-white">{{ session.get('username', 'Gast') }}</strong>
                     <div class="mt-2">
                         <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
                     </div>
-                    <div class="mt-4">Versie 2.3 (Cookie Support)</div>
+                    <div class="mt-4">Versie 2.4 (Tags Support)</div>
                 </div>
             </nav>
             {% endif %}
@@ -554,43 +639,27 @@ BASE_LAYOUT = """
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // Functie voor notificaties
         function showNotification(message, type = 'success') {
             const notif = document.getElementById('dashboard-notification');
-            // Zorg ervoor dat het element bestaat
             if (!notif) return;
-
             notif.className = `alert alert-${type} fixed-top mt-3 mx-auto shadow-lg`;
             notif.style.display = 'block';
             notif.innerHTML = message;
-            setTimeout(() => {
-                notif.style.display = 'none';
-            }, 3000);
+            setTimeout(() => { notif.style.display = 'none'; }, 3000);
         }
 
-        // Functie voor kopiëren naar klembord
         function copyKey(elementId) {
             const inputElement = document.getElementById(elementId);
             if (!inputElement) return;
-            
-            // Selecteer de tekst
             inputElement.select();
             inputElement.setSelectionRange(0, 99999); 
-            
-            // Kopieer de tekst via de fallback methode
             try {
                 const successful = document.execCommand('copy');
-                if (successful) {
-                    showNotification('Token gekopieerd!', 'success'); // Aangepast naar Token
-                } else {
-                    showNotification('Kopiëren mislukt. Probeer handmatig te selecteren.', 'danger');
-                }
-            } catch (err) {
-                 showNotification('Kopiëren mislukt wegens fout.', 'danger');
-            }
+                if (successful) showNotification('Gekopieerd!', 'success');
+                else showNotification('Kopiëren mislukt.', 'danger');
+            } catch (err) { showNotification('Kopiëren mislukt.', 'danger'); }
         }
         
-        // Tijdzone conversie script
         document.addEventListener("DOMContentLoaded", function() {
             document.querySelectorAll('.utc-timestamp').forEach(element => {
                 const utcTime = element.dataset.utc;
@@ -601,13 +670,9 @@ BASE_LAYOUT = """
                     }
                 }
             });
-            
-            // JWT Flash Message Kopieer Listener
             const jwtCopyButton = document.getElementById('jwt-copy-button');
             if (jwtCopyButton) {
-                jwtCopyButton.addEventListener('click', () => {
-                    copyKey('jwt-token-input');
-                });
+                jwtCopyButton.addEventListener('click', () => { copyKey('jwt-token-input'); });
             }
         });
     </script>
@@ -715,7 +780,13 @@ DASHBOARD_CONTENT = """
 
 ENDPOINTS_CONTENT = """
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Endpoints Beheer</h2>
+        <div>
+            <h2>Endpoints Beheer</h2>
+            {% if active_filter %}
+                <span class="badge bg-info text-dark">Gefilterd op: {{ active_filter }}</span>
+                <a href="/endpoints" class="btn btn-sm btn-outline-secondary ms-2">Reset</a>
+            {% endif %}
+        </div>
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
             <i class="bi bi-plus-lg"></i> Nieuw Endpoint
         </button>
@@ -730,15 +801,27 @@ ENDPOINTS_CONTENT = """
                         /api/{{ ep.name }} 
                         {% if ep.system %}<i class="bi bi-shield-lock-fill small ms-1" title="Systeem Endpoint"></i>{% endif %}
                     </h5>
-                    {% if not ep.system %}
-                    <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert alle data in {{ ep.name }}. Doorgaan?');">
-                        <input type="hidden" name="name" value="{{ ep.name }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-                    </form>
-                    {% endif %}
+                    
+                    <div class="d-flex">
+                        {% if not ep.system %}
+                        <button class="btn btn-sm btn-outline-secondary me-1" 
+                                onclick="openEditModal('{{ ep.name }}', '{{ ep.description }}', '{{ ep.tags | join(',') }}')">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert alle data in {{ ep.name }}. Doorgaan?');">
+                            <input type="hidden" name="name" value="{{ ep.name }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                        {% endif %}
+                    </div>
                 </div>
                 <div class="card-body">
                     <p class="text-muted small">{{ ep.description }}</p>
+                    <div class="mb-3">
+                        {% for tag in ep.tags %}
+                            <span class="badge bg-secondary opacity-75">{{ tag }}</span>
+                        {% endfor %}
+                    </div>
                     <div class="row text-center mt-3">
                         <div class="col-6 border-end border-secondary">
                             <small class="text-muted">Records</small>
@@ -759,6 +842,7 @@ ENDPOINTS_CONTENT = """
         {% endfor %}
     </div>
 
+    <!-- Create Modal -->
     <div class="modal fade" id="addEndpointModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
@@ -780,6 +864,11 @@ ENDPOINTS_CONTENT = """
                             <label class="form-label">Omschrijving</label>
                             <input type="text" name="description" class="form-control bg-black text-white">
                         </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tags</label>
+                            <input type="text" name="tags" class="form-control bg-black text-white" placeholder="bv. extern, beta, intern">
+                            <div class="form-text text-muted">Komma gescheiden labels voor filtering.</div>
+                        </div>
                     </div>
                     <div class="modal-footer border-secondary">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuleren</button>
@@ -789,6 +878,51 @@ ENDPOINTS_CONTENT = """
             </div>
         </div>
     </div>
+    
+    <!-- Edit Modal -->
+    <div class="modal fade" id="editEndpointModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-white border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Endpoint Bewerken</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST" action="/endpoints/update">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Naam</label>
+                            <input type="text" id="edit-name-display" class="form-control bg-secondary text-white" disabled>
+                            <input type="hidden" name="name" id="edit-name-input">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Omschrijving</label>
+                            <input type="text" name="description" id="edit-desc-input" class="form-control bg-black text-white">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tags</label>
+                            <input type="text" name="tags" id="edit-tags-input" class="form-control bg-black text-white" placeholder="bv. extern, beta">
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuleren</button>
+                        <button type="submit" class="btn btn-primary">Opslaan</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function openEditModal(name, desc, tags) {
+        document.getElementById('edit-name-display').value = name;
+        document.getElementById('edit-name-input').value = name;
+        document.getElementById('edit-desc-input').value = desc;
+        document.getElementById('edit-tags-input').value = tags;
+        
+        var myModal = new bootstrap.Modal(document.getElementById('editEndpointModal'));
+        myModal.show();
+    }
+    </script>
 """
 
 CLIENT_DETAIL_CONTENT = """
@@ -972,12 +1106,6 @@ def dashboard_login():
 
 @app.errorhandler(429)
 def ratelimit_handler(e):
-    """
-    Handler voor Rate Limit Exceeded (HTTP 429).
-    Dit vangt de foutmelding van de Flask-Limiter op en zet deze om naar een
-    gebruikersvriendelijke flash-message op de loginpagina.
-    """
-    # De foutmelding is al in de limiter gedefinieerd: "Te veel mislukte loginpogingen..."
     flash(str(e.description), "danger")
     return redirect(url_for('dashboard_login'))
 
@@ -1063,7 +1191,6 @@ def dashboard():
                     label = current.strftime(current_range['group'])
                     chart_data['labels'].append(label)
                     chart_data['counts'].append(agg_dict.get(label, 0))
-                    # Maand ophogen
                     nm = current.month + 1
                     ny = current.year
                     if nm > 12:
@@ -1082,24 +1209,47 @@ def dashboard():
     return render_template_string(BASE_LAYOUT, page='dashboard', page_content=content)
 
 @app.route('/endpoints', methods=['GET', 'POST'])
-@require_dashboard_auth # Nieuwe beveiliging
+@require_dashboard_auth 
 def endpoints_page():
     if request.method == 'POST':
         name = request.form.get('name')
         desc = request.form.get('description')
-        success, err = create_endpoint(name, desc)
+        tags = request.form.get('tags') # Nieuw veld
+        
+        success, err = create_endpoint(name, desc, tags)
         if success: flash(f"Endpoint '{name}' aangemaakt.", "success")
         else: flash(f"Fout: {err}", "danger")
         return redirect(url_for('endpoints_page'))
 
-    endpoints = get_configured_endpoints()
+    # Check of er een filter actief is
+    tag_filter = request.args.get('tag')
+    
+    endpoints = get_configured_endpoints(tag_filter=tag_filter)
     for ep in endpoints:
         ep['stats'] = get_endpoint_stats(ep['name'])
-    content = render_template_string(ENDPOINTS_CONTENT, endpoints=endpoints)
+        
+    content = render_template_string(ENDPOINTS_CONTENT, 
+                                     endpoints=endpoints, 
+                                     active_filter=tag_filter)
     return render_template_string(BASE_LAYOUT, page='endpoints', page_content=content)
 
+@app.route('/endpoints/update', methods=['POST'])
+@require_dashboard_auth
+def update_endpoint_route():
+    name = request.form.get('name')
+    desc = request.form.get('description')
+    tags = request.form.get('tags')
+    
+    success, err = update_endpoint_metadata(name, desc, tags)
+    if success: 
+        flash(f"Endpoint '{name}' bijgewerkt.", "success")
+    else: 
+        flash(f"Fout bij updaten: {err}", "danger")
+        
+    return redirect(url_for('endpoints_page'))
+
 @app.route('/endpoints/delete', methods=['POST'])
-@require_dashboard_auth # Nieuwe beveiliging
+@require_dashboard_auth 
 def delete_endpoint_route():
     name = request.form.get('name')
     if delete_endpoint(name): flash(f"Endpoint '{name}' verwijderd.", "warning")
@@ -1107,7 +1257,7 @@ def delete_endpoint_route():
     return redirect(url_for('endpoints_page'))
 
 @app.route('/client/<source_app>')
-@require_dashboard_auth # Nieuwe beveiliging
+@require_dashboard_auth 
 def client_detail(source_app):
     client, _ = get_db_connection()
     logs = []
@@ -1117,22 +1267,19 @@ def client_detail(source_app):
     
     if client:
         db = client['api_gateway_db']
-        # Totaal aantal requests (24u)
         yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
         total_requests = db['statistics'].count_documents({'source': source_app, 'timestamp': {'$gte': yesterday}})
         
-        # Check of client een API key heeft
         if db['api_keys'].find_one({'client_id': source_app}):
             has_key = True
 
-        # Check of client een geregistreerde gebruiker is
         if db['users'].find_one({'username': source_app}):
             is_user = True
 
         cursor = db['statistics'].find({'source': source_app}).sort('timestamp', -1).limit(20)
         for doc in cursor:
             logs.append({
-                'timestamp': doc['timestamp'].isoformat(), # Raw ISO voor JS conversie
+                'timestamp': doc['timestamp'].isoformat(), 
                 'action': doc.get('action', '-'),
                 'endpoint': doc.get('endpoint', 'general')
             })
@@ -1146,7 +1293,7 @@ def client_detail(source_app):
     return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
 
 @app.route('/settings', methods=['GET', 'POST'])
-@require_dashboard_auth # Nieuwe beveiliging
+@require_dashboard_auth 
 def settings():
     client, _ = get_db_connection()
     db = client['api_gateway_db'] if client else None
@@ -1154,11 +1301,9 @@ def settings():
     if request.method == 'POST':
         action = request.form.get('action')
         
-        # NIEUWE LOGICA VOOR GEBRUIKERSBEHEER
         if action == 'create_user':
             username = request.form.get('username')
             password = request.form.get('password')
-            # Lees de gekozen geldigheidsduur (default 24 uur / 1440 min)
             token_validity = int(request.form.get('token_validity_minutes', 1440))
             
             if db is None:
@@ -1167,24 +1312,20 @@ def settings():
                 flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
             else:
                 try:
-                    # 1. Gebruiker aanmaken met token voorkeur
                     result = db['users'].insert_one({
                         'username': username,
                         'password_hash': hash_password(password),
                         'created_at': datetime.datetime.utcnow(),
                         'role': 'admin',
-                        'token_validity_minutes': token_validity # Opslaan van voorkeur
+                        'token_validity_minutes': token_validity 
                     })
                     
-                    # 2. JWT genereren voor de nieuwe gebruiker met specifieke expiry
                     new_user_id = result.inserted_id
                     new_token = encode_auth_token(new_user_id, token_validity)
                     
-                    # Bereken dagen voor nette weergave in bericht
                     days = token_validity // 1440
                     time_msg = f"{days} dagen" if days >= 1 else "24 uur"
 
-                    # 3. HTML fragment genereren om de token te tonen en te kopiëren
                     token_html = f"""
                     <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
                     <div class="d-flex align-items-center">
@@ -1213,7 +1354,6 @@ def settings():
             if success: flash(f"Gebruiker '{username}' verwijderd. Actieve JWT's zijn ongeldig geworden.", "warning")
             else: flash(f"Fout: {err}", "danger")
 
-        # BESTAANDE LOGICA VOOR LEGACY EN DB SETTINGS
         elif action == 'revoke_key':
             revoke_api_key_db(request.form.get('client_id'))
         elif action == 'save_uri':
@@ -1223,7 +1363,7 @@ def settings():
         return redirect(url_for('settings'))
 
     api_keys = load_api_keys()
-    active_users = load_all_users() # Lijst met actieve users
+    active_users = load_all_users() 
 
     content = render_template_string(SETTINGS_CONTENT, 
                                      api_keys=api_keys, 
@@ -1245,7 +1385,6 @@ def handle_dynamic_endpoint(endpoint_name):
     if not client: return jsonify({"error": "DB failure"}), 503
     db = client['api_gateway_db']
     
-    # Controleer of het een bekend endpoint is.
     if endpoint_name not in ['data', 'items', 'projects'] and not db['endpoints'].find_one({'name': endpoint_name}):
         return jsonify({"error": f"Endpoint '{endpoint_name}' not found"}), 404
 
@@ -1257,16 +1396,12 @@ def handle_dynamic_endpoint(endpoint_name):
         data = request.json
         if not data: return jsonify({"error": "No JSON"}), 400
         
-        # --- FIX VOOR OPSLAAN VAN CLIENT DATA ---
-        
-        # Voeg meta-informatie toe
         data['meta'] = {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
         
         try:
             result = collection.insert_one(data)
             log_statistic("post_data", client_id, endpoint_name)
             
-            # Stuur het opgeslagen document terug, inclusief de nieuwe MongoDB _id
             saved_doc = collection.find_one({'_id': result.inserted_id})
 
             if saved_doc:
@@ -1277,42 +1412,34 @@ def handle_dynamic_endpoint(endpoint_name):
                 return jsonify({"status": "created", "id": str(result.inserted_id), "data": {}}), 201
 
         except Exception as e:
-            # Vaak een duplicate key error als de client een ID meestuurt en er een unieke index is
             print(f"MongoDB Insert Error: {e}")
             return jsonify({"error": f"Kon document niet opslaan: {e}"}), 500
 
     elif request.method == 'GET':
         query = {}
-        # Support basic query filtering op de root velden
         for k, v in request.args.items():
             if k != '_limit': 
-                # Query nu direct op root velden (bijv. 'projectId' of 'type')
                 query[k] = v 
         
-        # --- DATA ISOLATIE: Voeg verplicht filter toe ---
         query['meta.client_id'] = client_id
             
         limit = int(request.args.get('_limit', 50))
         
-        # Fetch met _id
         docs = list(collection.find(query).sort("meta.created_at", -1).limit(limit))
         
-        # Transformeer _id naar string id en stuur het volledige document terug als 'data'
         result_docs = []
         for d in docs:
             d['id'] = str(d['_id'])
             del d['_id']
-            # Stuur het document terug in het client-formaat {id: 'mongo_id', data: {...document...}}
             result_docs.append({
                 "id": d['id'],
-                "data": d # Het volledige document
+                "data": d 
             })
             
         log_statistic("read_data", client_id, endpoint_name)
         return jsonify(result_docs), 200
 
     elif request.method == 'DELETE':
-        # Bulk delete support via query params (e.g. ?projectId=123)
         query = {}
         for k, v in request.args.items():
             query[k] = v
@@ -1320,7 +1447,6 @@ def handle_dynamic_endpoint(endpoint_name):
         if not query:
              return jsonify({"error": "DELETE requires query parameters for safety"}), 400
 
-        # --- DATA ISOLATIE: Voeg verplicht filter toe ---
         query['meta.client_id'] = client_id
 
         result = collection.delete_many(query)
@@ -1351,47 +1477,37 @@ def handle_single_document(endpoint_name, doc_id):
         doc = collection.find_one({'_id': oid})
         if not doc: return jsonify({"error": "Not found"}), 404
         
-        # --- DATA ISOLATIE CHECK ---
         if doc.get('meta', {}).get('client_id') != client_id:
-            # We doen alsof het niet bestaat voor beveiliging, of geven een 403 Forbidden
             return jsonify({"error": "Not found or access denied"}), 403
 
         doc['id'] = str(doc['_id'])
         del doc['_id']
         log_statistic("read_one", client_id, endpoint_name)
-        # Formatteer voor de client: {id: 'mongo_id', data: {...document...}}
         return jsonify({"id": doc['id'], "data": doc}), 200
 
     elif request.method == 'PUT':
         data = request.json
         if not data: return jsonify({"error": "No JSON"}), 400
         
-        # --- FIX VOOR UPDATEN VAN CLIENT DATA ---
-        
         update_doc = data.copy()
-        if 'id' in update_doc: del update_doc['id'] # Client stuurt dit mee
-        if '_id' in update_doc: del update_doc['_id'] # Zou niet mogen, maar voor de zekerheid
-        if 'meta' in update_doc: del update_doc['meta'] # Meta wordt apart gezet
+        if 'id' in update_doc: del update_doc['id'] 
+        if '_id' in update_doc: del update_doc['_id'] 
+        if 'meta' in update_doc: del update_doc['meta'] 
 
-        # Voeg updated_at toe aan de meta-informatie
         update_doc['meta'] = data.get('meta', {})
         update_doc['meta']['updated_at'] = datetime.datetime.utcnow()
-        update_doc['meta']['client_id'] = client_id # Update of zet de client_id
+        update_doc['meta']['client_id'] = client_id 
 
-        # --- DATA ISOLATIE: Update alleen als ID én ClientID matchen ---
         result = collection.update_one(
             {'_id': oid, 'meta.client_id': client_id}, 
             {'$set': update_doc}
         )
         
         if result.matched_count == 0:
-            # Kan zijn dat doc niet bestaat, OF dat het van iemand anders is
             return jsonify({"error": "Not found or access denied"}), 404
             
-        # Return updated document
         updated_doc = collection.find_one({'_id': oid})
         
-        # Formatteer voor de client
         updated_doc['id'] = str(updated_doc['_id'])
         del updated_doc['_id']
         log_statistic("update_one", client_id, endpoint_name)
@@ -1399,7 +1515,6 @@ def handle_single_document(endpoint_name, doc_id):
         return jsonify({"id": updated_doc['id'], "data": updated_doc}), 200
 
     elif request.method == 'DELETE':
-        # --- DATA ISOLATIE: Delete alleen als ID én ClientID matchen ---
         result = collection.delete_one({'_id': oid, 'meta.client_id': client_id})
         
         if result.deleted_count == 0:
