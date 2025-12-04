@@ -16,7 +16,7 @@ from bson import ObjectId
 # IMPORTS voor JWT en hashing
 import jwt 
 from bcrypt import hashpw, gensalt, checkpw
-import hashlib # Nieuw: voor tag kleur hashing
+import hashlib 
 
 # --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
@@ -82,17 +82,16 @@ def format_size(size_bytes):
         i += 1
     return f"{size_bytes:.2f} {size_name[i]}"
 
-# --- Helper: Tag Kleur Generatie (NIEUW) ---
+# --- Helper: Tag Kleur Generatie (AANGEPAST: 20 kleuren) ---
 def get_tag_color_class(tag):
-    """Genereert een deterministische kleurklasse op basis van de tag naam."""
+    """Genereert een deterministische kleurklasse op basis van de tag naam (0-19)."""
     # Gebruik SHA-1 hash en modulo om een kleurindex te krijgen
     hash_object = hashlib.sha1(tag.encode())
     hex_dig = hash_object.hexdigest()
     
-    # Kiest uit 6 kleuren
-    color_index = int(hex_dig, 16) % 6
+    # Kiest uit 20 kleuren
+    color_index = int(hex_dig, 16) % 20
     
-    # Kleurklassen die in de CSS worden gedefinieerd
     return f"tag-color-{color_index}"
 
 
@@ -173,7 +172,6 @@ def get_configured_endpoints(tag_filter=None):
     endpoints = []
     
     # 1. Voeg het standaard systeem endpoint toe (Legacy support)
-    # Systeem endpoints hebben standaard geen tags, tenzij we dat later implementeren via een override
     endpoints.append({
         'name': 'data',
         'description': 'Standaard Endpoint (Legacy / app_data)',
@@ -361,14 +359,20 @@ def delete_user_db(username):
 @app.route('/api/auth/login', methods=['POST'])
 def login_api():
     client, _ = get_db_connection()
-    if not client: return jsonify({"error": "DB failure"}), 503
     
     data = request.json
     if not data or 'username' not in data or 'password' not in data:
+        # Log IP bij ongeldige input
+        log_statistic("login_failed_invalid_input", get_remote_address(), "auth")
         return jsonify({"error": "Ongeldige input: gebruikersnaam en wachtwoord vereist."}), 400
         
     username = data['username']
     password = data['password']
+    
+    if not client: 
+        # Log de gebruikersnaam als fallback, maar in dit geval de IP bij DB failure
+        log_statistic("login_failed_db_error", get_remote_address(), "auth")
+        return jsonify({"error": "DB failure"}), 503
     
     db = client['api_gateway_db']
     user = db['users'].find_one({'username': username})
@@ -401,7 +405,8 @@ def login_api():
         
         return response, 200
     else:
-        log_statistic("login_failed", username, "auth") # Belangrijk voor het tellen van foute logins
+        # Log de IP-adres bij foute inlogpoging
+        log_statistic("login_failed", get_remote_address(), "auth")
         return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -591,13 +596,27 @@ BASE_LAYOUT = """
         .tag-pill:hover { opacity: 0.8; color: #fff !important; }
         .tag-pill.active { border: 2px solid #0d6efd; background-color: transparent !important; color: #0d6efd !important; }
         
-        /* NIEUW: Dynamische kleuren voor tags op basis van hash */
-        .tag-color-0 { background-color: #2c3e50; color: #bdc3c7; } /* Donkergrijs/blauw */
-        .tag-color-1 { background-color: #e67e22; color: #fff; } /* Oranje */
-        .tag-color-2 { background-color: #27ae60; color: #fff; } /* Groen */
-        .tag-color-3 { background-color: #9b59b6; color: #fff; } /* Paars */
-        .tag-color-4 { background-color: #3498db; color: #fff; } /* Blauw */
-        .tag-color-5 { background-color: #e74c3c; color: #fff; } /* Rood */
+        /* AANGEPAST: 20 Dynamische kleuren voor tags op basis van hash */
+        .tag-color-0 { background-color: #e67e22; color: #fff; } /* Oranje */
+        .tag-color-1 { background-color: #27ae60; color: #fff; } /* Groen */
+        .tag-color-2 { background-color: #9b59b6; color: #fff; } /* Paars */
+        .tag-color-3 { background-color: #3498db; color: #fff; } /* Blauw */
+        .tag-color-4 { background-color: #e74c3c; color: #fff; } /* Rood */
+        .tag-color-5 { background-color: #1abc9c; color: #fff; } /* Turqouise */
+        .tag-color-6 { background-color: #f1c40f; color: #000; } /* Geel */
+        .tag-color-7 { background-color: #95a5a6; color: #000; } /* Lichtgrijs */
+        .tag-color-8 { background-color: #d35400; color: #fff; } /* Donker Oranje */
+        .tag-color-9 { background-color: #2ecc71; color: #fff; } /* Emerald Groen */
+        .tag-color-10 { background-color: #8e44ad; color: #fff; } /* Donker Paars */
+        .tag-color-11 { background-color: #2980b9; color: #fff; } /* Donker Blauw */
+        .tag-color-12 { background-color: #c0392b; color: #fff; } /* Donker Rood */
+        .tag-color-13 { background-color: #16a085; color: #fff; } /* Donker Turqouise */
+        .tag-color-14 { background-color: #f39c12; color: #000; } /* Donker Geel */
+        .tag-color-15 { background-color: #7f8c8d; color: #fff; } /* Grijs */
+        .tag-color-16 { background-color: #bdc3c7; color: #000; } /* Heel Licht Grijs */
+        .tag-color-17 { background-color: #34495e; color: #fff; } /* Midnight Blue */
+        .tag-color-18 { background-color: #00b894; color: #fff; } /* Medium Turqouise */
+        .tag-color-19 { background-color: #fd79a8; color: #000; } /* Roze */
         
         {% if page == 'login' %}
         .container-fluid { height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -624,7 +643,7 @@ BASE_LAYOUT = """
                   <span>Filter op Tag</span>
                 </h6>
                 <div class="px-3">
-                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else get_tag_color_class(tag) }}">Alle</a>
+                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else get_tag_color_class('Alle') }}">Alle</a>
                     {% for tag in all_tags %}
                         <a href="{{ url_for('endpoints_page', tag=tag) }}" 
                            class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag else get_tag_color_class(tag) }}">
@@ -639,7 +658,7 @@ BASE_LAYOUT = """
                     <div class="mt-2">
                         <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
                     </div>
-                    <div class="mt-4">Versie 2.5 (Tag Colors & Login Stats)</div>
+                    <div class="mt-4">Versie 2.6 (20 Colors & IP Logs)</div>
                 </div>
             </nav>
             {% endif %}
@@ -779,7 +798,7 @@ DASHBOARD_CONTENT = """
                 <ul class="list-group list-group-flush">
                     {% for client, count in failed_logins.items() %}
                     <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <span class="text-muted">{{ client }}</span>
+                        <span class="text-muted font-monospace">{{ client }}</span>
                         <span class="badge bg-danger">{{ count }}</span>
                     </li>
                     {% else %}
@@ -1132,13 +1151,16 @@ def dashboard_login():
 
     if request.method == 'POST':
         client, _ = get_db_connection()
-        if not client: 
-            flash("DB fout: Kan geen verbinding maken.", "danger")
-            return redirect(url_for('dashboard_login'))
         
         username = request.form.get('username')
         password = request.form.get('password')
         
+        if not client: 
+            # Log de IP als de DB faalt
+            log_statistic("login_failed_db_error", get_remote_address(), "dashboard")
+            flash("DB fout: Kan geen verbinding maken.", "danger")
+            return redirect(url_for('dashboard_login'))
+
         db = client['api_gateway_db']
         user = db['users'].find_one({'username': username})
         
@@ -1147,10 +1169,9 @@ def dashboard_login():
             flash(f"Succesvol ingelogd als {username}.", "success")
             return redirect(url_for('dashboard'))
         else:
-            # Log de mislukte login (ongeacht of de user bestaat, om brute-force pogingen te tracken)
-            log_statistic("login_failed_dashboard", username, "dashboard") 
+            # Log de IP-adres bij foute inlogpoging (deze actie wordt getoond in het dashboard)
+            log_statistic("login_failed_dashboard", get_remote_address(), "dashboard") 
             flash("Ongeldige gebruikersnaam of wachtwoord.", "danger")
-            # Belangrijk: De limiter telt hier automatisch een mislukte POST-poging.
             return redirect(url_for('dashboard_login'))
 
     content = render_template_string(LOGIN_CONTENT)
@@ -1159,6 +1180,8 @@ def dashboard_login():
 
 @app.errorhandler(429)
 def ratelimit_handler(e):
+    # Log de IP die de ratelimit triggert
+    log_statistic("ratelimit_hit", get_remote_address(), "dashboard")
     flash(str(e.description), "danger")
     return redirect(url_for('dashboard_login'))
 
@@ -1169,10 +1192,10 @@ def dashboard_logout():
     return redirect(url_for('dashboard_login'))
 
 @app.route('/')
-@require_dashboard_auth # Nieuwe beveiliging
+@require_dashboard_auth 
 def dashboard():
     time_range = request.args.get('range', '6h')
-    login_range = request.args.get('login_range', '24h') # NIEUW: Range voor mislukte logins
+    login_range = request.args.get('login_range', '24h') 
     
     # Range map voor algemene activiteit
     range_map = {
@@ -1202,7 +1225,7 @@ def dashboard():
     unique_clients = []
     chart_data = {"labels": [], "counts": []}
     total_size = 0
-    failed_logins = {} # NIEUW: Mislukte logins dict
+    failed_logins = {} 
 
     if db_connected:
         try:
@@ -1267,10 +1290,10 @@ def dashboard():
                         ny += 1
                     current = datetime.datetime(ny, nm, 1)
 
-            # NIEUW: Mislukte logins tellen
+            # Mislukte logins tellen (API, Dashboard, DB Error, Invalid Input)
             failed_logins_pipeline = [
                 {'$match': {
-                    'action': {'$in': ['login_failed', 'login_failed_dashboard']},
+                    'action': {'$in': ['login_failed', 'login_failed_dashboard', 'login_failed_db_error', 'login_failed_invalid_input']},
                     'timestamp': {'$gte': login_start_time}
                 }},
                 {'$group': {
@@ -1289,7 +1312,6 @@ def dashboard():
         db_connected=db_connected, stats_count=stats_count, client_count=len(unique_clients),
         clients=unique_clients, chart_data=chart_data, total_storage=format_size(total_size),
         time_range=time_range, current_range_label=current_range['label'],
-        # NIEUWE WAARDEN
         login_range=login_range, login_range_label=current_login_range['label'],
         failed_logins=failed_logins)
     return render_template_string(BASE_LAYOUT, page='dashboard', page_content=content)
