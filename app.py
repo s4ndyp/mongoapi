@@ -8,7 +8,7 @@ from functools import wraps
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session, make_response
 from flask_cors import CORS 
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure, OperationFailure
+from pymongo.errors import ConnectionFailure, OperationFailure
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from bson import ObjectId
@@ -16,6 +16,7 @@ from bson import ObjectId
 # IMPORTS voor JWT en hashing
 import jwt 
 from bcrypt import hashpw, gensalt, checkpw
+import hashlib # Nieuw: voor tag kleur hashing
 
 # --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
@@ -80,6 +81,20 @@ def format_size(size_bytes):
         size_bytes /= p
         i += 1
     return f"{size_bytes:.2f} {size_name[i]}"
+
+# --- Helper: Tag Kleur Generatie (NIEUW) ---
+def get_tag_color_class(tag):
+    """Genereert een deterministische kleurklasse op basis van de tag naam."""
+    # Gebruik SHA-1 hash en modulo om een kleurindex te krijgen
+    hash_object = hashlib.sha1(tag.encode())
+    hex_dig = hash_object.hexdigest()
+    
+    # Kiest uit 6 kleuren
+    color_index = int(hex_dig, 16) % 6
+    
+    # Kleurklassen die in de CSS worden gedefinieerd
+    return f"tag-color-{color_index}"
+
 
 # --- Database Connectie & Indexen ---
 def ensure_indexes(db):
@@ -163,7 +178,7 @@ def get_configured_endpoints(tag_filter=None):
         'name': 'data',
         'description': 'Standaard Endpoint (Legacy / app_data)',
         'system': True,
-        'tags': ['system'],
+        'tags': ['system', 'legacy'],
         'created_at': datetime.datetime.min
     })
     
@@ -204,7 +219,7 @@ def get_configured_endpoints(tag_filter=None):
 def get_all_unique_tags():
     """Haalt alle unieke tags op uit de database en de hardcoded endpoints voor de sidebar."""
     client, _ = get_db_connection()
-    tags = set(['system', 'taskey']) # Start met systeem tags
+    tags = set(['system', 'taskey', 'legacy']) # Start met systeem tags
     
     if client:
         try:
@@ -260,6 +275,7 @@ def create_endpoint(name, description, tags_str):
             'tags': tags,
             'created_at': datetime.datetime.utcnow()
         })
+        # Maak ook de collectie aan
         client['api_gateway_db'].create_collection(get_db_collection_name(name))
         return True, None
     except Exception as e: return False, str(e)
@@ -385,7 +401,7 @@ def login_api():
         
         return response, 200
     else:
-        log_statistic("login_failed", username, "auth")
+        log_statistic("login_failed", username, "auth") # Belangrijk voor het tellen van foute logins
         return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -503,7 +519,7 @@ def require_dashboard_auth(f):
 @app.context_processor
 def inject_sidebar_data():
     if request.endpoint and 'static' not in request.endpoint:
-        return dict(all_tags=get_all_unique_tags())
+        return dict(all_tags=get_all_unique_tags(), get_tag_color_class=get_tag_color_class)
     return dict()
 
 # ---------------------------------------------------
@@ -568,13 +584,20 @@ BASE_LAYOUT = """
             font-size: 0.75rem;
             padding: 2px 8px;
             border-radius: 10px;
-            background-color: #2c3e50;
-            color: #bdc3c7;
             margin-right: 4px;
             text-decoration: none;
+            display: inline-block;
         }
-        .tag-pill:hover { background-color: #34495e; color: #fff; }
-        .tag-pill.active { background-color: #0d6efd; color: white; }
+        .tag-pill:hover { opacity: 0.8; color: #fff !important; }
+        .tag-pill.active { border: 2px solid #0d6efd; background-color: transparent !important; color: #0d6efd !important; }
+        
+        /* NIEUW: Dynamische kleuren voor tags op basis van hash */
+        .tag-color-0 { background-color: #2c3e50; color: #bdc3c7; } /* Donkergrijs/blauw */
+        .tag-color-1 { background-color: #e67e22; color: #fff; } /* Oranje */
+        .tag-color-2 { background-color: #27ae60; color: #fff; } /* Groen */
+        .tag-color-3 { background-color: #9b59b6; color: #fff; } /* Paars */
+        .tag-color-4 { background-color: #3498db; color: #fff; } /* Blauw */
+        .tag-color-5 { background-color: #e74c3c; color: #fff; } /* Rood */
         
         {% if page == 'login' %}
         .container-fluid { height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -582,7 +605,6 @@ BASE_LAYOUT = """
     </style>
 </head>
 <body>
-    <!-- Notificatie/Toast element voor kopieren -->
     <div id="dashboard-notification" class="alert alert-success d-none fixed-top mt-3 mx-auto shadow-lg" 
         style="width: 300px; z-index: 1050; text-align: center;"></div>
 
@@ -602,10 +624,10 @@ BASE_LAYOUT = """
                   <span>Filter op Tag</span>
                 </h6>
                 <div class="px-3">
-                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else '' }}">Alle</a>
+                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else get_tag_color_class(tag) }}">Alle</a>
                     {% for tag in all_tags %}
                         <a href="{{ url_for('endpoints_page', tag=tag) }}" 
-                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag else '' }}">
+                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag else get_tag_color_class(tag) }}">
                            {{ tag }}
                         </a>
                     {% endfor %}
@@ -617,7 +639,7 @@ BASE_LAYOUT = """
                     <div class="mt-2">
                         <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
                     </div>
-                    <div class="mt-4">Versie 2.4 (Tags Support)</div>
+                    <div class="mt-4">Versie 2.5 (Tag Colors & Login Stats)</div>
                 </div>
             </nav>
             {% endif %}
@@ -736,6 +758,37 @@ DASHBOARD_CONTENT = """
             </div>
         </div>
     </div>
+    
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card p-3 border-warning">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="text-warning m-0"><i class="bi bi-person-fill-lock"></i> Mislukte Login Pogingen</h5>
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-warning dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                            {{ login_range_label }}
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-dark">
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range=time_range, login_range='24h') }}">Laatste 24 Uur</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range=time_range, login_range='7d') }}">Laatste 7 Dagen</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range=time_range, login_range='30d') }}">Laatste 30 Dagen</a></li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <ul class="list-group list-group-flush">
+                    {% for client, count in failed_logins.items() %}
+                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
+                        <span class="text-muted">{{ client }}</span>
+                        <span class="badge bg-danger">{{ count }}</span>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item bg-transparent text-muted">Geen mislukte login pogingen in deze periode.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
 
     <div class="row">
         <div class="col-md-8">
@@ -747,12 +800,12 @@ DASHBOARD_CONTENT = """
                             {{ current_range_label }}
                         </button>
                         <ul class="dropdown-menu dropdown-menu-dark">
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='6h') }}">Laatste 6 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='24h') }}">Laatste 24 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='7d') }}">Laatste Week</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='6h', login_range=login_range) }}">Laatste 6 Uur</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='24h', login_range=login_range) }}">Laatste 24 Uur</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='7d', login_range=login_range) }}">Laatste Week</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='30d') }}">Laatste Maand</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='365d') }}">Laatste Jaar</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='30d', login_range=login_range) }}">Laatste Maand</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='365d', login_range=login_range) }}">Laatste Jaar</a></li>
                         </ul>
                     </div>
                 </div>
@@ -783,7 +836,7 @@ ENDPOINTS_CONTENT = """
         <div>
             <h2>Endpoints Beheer</h2>
             {% if active_filter %}
-                <span class="badge bg-info text-dark">Gefilterd op: {{ active_filter }}</span>
+                <span class="tag-pill {{ get_tag_color_class(active_filter) }} active">Gefilterd op: {{ active_filter }}</span>
                 <a href="/endpoints" class="btn btn-sm btn-outline-secondary ms-2">Reset</a>
             {% endif %}
         </div>
@@ -805,7 +858,7 @@ ENDPOINTS_CONTENT = """
                     <div class="d-flex">
                         {% if not ep.system %}
                         <button class="btn btn-sm btn-outline-secondary me-1" 
-                                onclick="openEditModal('{{ ep.name }}', '{{ ep.description }}', '{{ ep.tags | join(',') }}')">
+                                onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}')">
                             <i class="bi bi-pencil"></i>
                         </button>
                         <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert alle data in {{ ep.name }}. Doorgaan?');">
@@ -819,7 +872,7 @@ ENDPOINTS_CONTENT = """
                     <p class="text-muted small">{{ ep.description }}</p>
                     <div class="mb-3">
                         {% for tag in ep.tags %}
-                            <span class="badge bg-secondary opacity-75">{{ tag }}</span>
+                            <span class="tag-pill {{ get_tag_color_class(tag) }}">{{ tag }}</span>
                         {% endfor %}
                     </div>
                     <div class="row text-center mt-3">
@@ -842,7 +895,6 @@ ENDPOINTS_CONTENT = """
         {% endfor %}
     </div>
 
-    <!-- Create Modal -->
     <div class="modal fade" id="addEndpointModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
@@ -879,7 +931,6 @@ ENDPOINTS_CONTENT = """
         </div>
     </div>
     
-    <!-- Edit Modal -->
     <div class="modal fade" id="editEndpointModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
@@ -1096,6 +1147,8 @@ def dashboard_login():
             flash(f"Succesvol ingelogd als {username}.", "success")
             return redirect(url_for('dashboard'))
         else:
+            # Log de mislukte login (ongeacht of de user bestaat, om brute-force pogingen te tracken)
+            log_statistic("login_failed_dashboard", username, "dashboard") 
             flash("Ongeldige gebruikersnaam of wachtwoord.", "danger")
             # Belangrijk: De limiter telt hier automatisch een mislukte POST-poging.
             return redirect(url_for('dashboard_login'))
@@ -1119,8 +1172,9 @@ def dashboard_logout():
 @require_dashboard_auth # Nieuwe beveiliging
 def dashboard():
     time_range = request.args.get('range', '6h')
+    login_range = request.args.get('login_range', '24h') # NIEUW: Range voor mislukte logins
     
-    # Uitgebreide range map met 30d en 365d
+    # Range map voor algemene activiteit
     range_map = {
         '6h': {'delta': datetime.timedelta(hours=6), 'label': 'Laatste 6 uur', 'group': '%H:00', 'fill': 'hour'},
         '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 uur', 'group': '%H:00', 'fill': 'hour'},
@@ -1129,8 +1183,18 @@ def dashboard():
         '365d': {'delta': datetime.timedelta(days=365), 'label': 'Laatste Jaar', 'group': '%b %Y', 'fill': 'month'},
     }
     
+    # Range map voor mislukte logins
+    login_range_map = {
+        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 Uur'},
+        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste 7 Dagen'},
+        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste 30 Dagen'},
+    }
+    
     current_range = range_map.get(time_range, range_map['6h'])
+    current_login_range = login_range_map.get(login_range, login_range_map['24h'])
+    
     start_time = datetime.datetime.utcnow() - current_range['delta']
+    login_start_time = datetime.datetime.utcnow() - current_login_range['delta']
     
     client, _ = get_db_connection()
     db_connected = client is not None
@@ -1138,6 +1202,7 @@ def dashboard():
     unique_clients = []
     chart_data = {"labels": [], "counts": []}
     total_size = 0
+    failed_logins = {} # NIEUW: Mislukte logins dict
 
     if db_connected:
         try:
@@ -1173,6 +1238,8 @@ def dashboard():
             
             if current_range['fill'] == 'hour':
                 step = datetime.timedelta(hours=1)
+                # Rond de starttijd naar beneden af op het uur om de labels te matchen
+                current = current.replace(minute=0, second=0, microsecond=0)
                 while current < now:
                     label = current.strftime(current_range['group'])
                     chart_data['labels'].append(label)
@@ -1180,6 +1247,8 @@ def dashboard():
                     current += step
             elif current_range['fill'] == 'day':
                 step = datetime.timedelta(days=1)
+                # Rond de starttijd naar beneden af op de dag
+                current = current.replace(hour=0, minute=0, second=0, microsecond=0)
                 while current < now:
                     label = current.strftime(current_range['group'])
                     chart_data['labels'].append(label)
@@ -1197,15 +1266,32 @@ def dashboard():
                         nm = 1
                         ny += 1
                     current = datetime.datetime(ny, nm, 1)
+
+            # NIEUW: Mislukte logins tellen
+            failed_logins_pipeline = [
+                {'$match': {
+                    'action': {'$in': ['login_failed', 'login_failed_dashboard']},
+                    'timestamp': {'$gte': login_start_time}
+                }},
+                {'$group': {
+                    '_id': '$source',
+                    'count': {'$sum': 1}
+                }},
+                {'$sort': {'count': -1}}
+            ]
+            failed_logins = {item['_id']: item['count'] for item in list(db['statistics'].aggregate(failed_logins_pipeline))}
                 
         except Exception as e:
-            print(f"Chart Error: {e}")
+            print(f"Dashboard Data Error: {e}")
             pass
             
     content = render_template_string(DASHBOARD_CONTENT,
         db_connected=db_connected, stats_count=stats_count, client_count=len(unique_clients),
         clients=unique_clients, chart_data=chart_data, total_storage=format_size(total_size),
-        time_range=time_range, current_range_label=current_range['label'])
+        time_range=time_range, current_range_label=current_range['label'],
+        # NIEUWE WAARDEN
+        login_range=login_range, login_range_label=current_login_range['label'],
+        failed_logins=failed_logins)
     return render_template_string(BASE_LAYOUT, page='dashboard', page_content=content)
 
 @app.route('/endpoints', methods=['GET', 'POST'])
