@@ -1,4 +1,4 @@
-# Gebruik een officiële Python runtime als parent image 1
+# Gebruik een officiële Python runtime als parent image 
 FROM python:3.9-slim
 
 # Zet de werkmap in de container
