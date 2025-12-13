@@ -2,7 +2,7 @@ name: Docker CI/CD voor API Gateway
 
 on:
   push:
-    branches: [ "split-files" ] # Start de workflow bij een push naar de 'main' branch
+    branches: [ "main" ] # Start de workflow bij een push naar de 'main' branch
 
 jobs:
   build_and_push:
