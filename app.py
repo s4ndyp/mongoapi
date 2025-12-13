@@ -92,7 +92,7 @@ def ensure_indexes(db):
         db['api_keys'].create_index("client_id", unique=True, background=True)
         db['endpoints'].create_index("name", unique=True, background=True)
         db['users'].create_index("username", unique=True, background=True)
-        db['tag_settings'].create_index("tag", unique=True, background=True) # NIEUWE INDEX
+        db['tag_settings'].create_index("tag", unique=True, background=True)
         
         # Data indexen
         db['data_items'].create_index([("projectId", 1), ("type", 1)], background=True)
@@ -146,7 +146,6 @@ def log_statistic(action, source_app, endpoint="default"):
 
 # --- Tag Management Logic ---
 def get_tag_color_map():
-    """Haalt een dictionary op met {tag_naam: hex_kleur}."""
     client, _ = get_db_connection()
     tag_map = {}
     
@@ -157,7 +156,6 @@ def get_tag_color_map():
     
     if client:
         try:
-            # Haal opgeslagen kleuren op uit nieuwe collectie
             settings = client['api_gateway_db']['tag_settings'].find({})
             for s in settings:
                 tag_map[s['tag']] = s['color']
@@ -167,24 +165,17 @@ def get_tag_color_map():
     return tag_map
 
 def update_tag_settings(original_name, new_name, color):
-    """Update naam en kleur van een tag. Werkt tags in endpoints bij als naam wijzigt."""
     client, _ = get_db_connection()
     if not client: return False, "No DB"
-    
     db = client['api_gateway_db']
-    
     try:
-        # 1. Als de naam verandert, update alle endpoints die deze tag gebruiken
         if original_name != new_name:
-            # Check of nieuwe naam al bestaat om merges te voorkomen die verwarrend zijn (optioneel, hier toegestaan)
             db['endpoints'].update_many(
                 {'tags': original_name},
                 {'$set': {'tags.$': new_name}}
             )
-            # Verwijder oude instelling als die bestond
             db['tag_settings'].delete_one({'tag': original_name})
             
-        # 2. Sla de nieuwe instelling (kleur) op
         db['tag_settings'].update_one(
             {'tag': new_name},
             {'$set': {'tag': new_name, 'color': color}},
@@ -195,7 +186,7 @@ def update_tag_settings(original_name, new_name, color):
         return False, str(e)
 
 # --- Endpoint Management Functies ---
-def get_configured_endpoints(tag_filter=None):
+def get_configured_endpoints(tag_filter=None, sort_by='alpha'):
     client, _ = get_db_connection()
     endpoints = []
     
@@ -225,7 +216,8 @@ def get_configured_endpoints(tag_filter=None):
 
     if client:
         try:
-            db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}).sort('name', 1))
+            # Haal DB endpoints op
+            db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}))
             for ep in db_endpoints:
                 if ep.get('name') not in ['data', 'items', 'projects']: 
                     ep['system'] = False
@@ -234,8 +226,18 @@ def get_configured_endpoints(tag_filter=None):
         except Exception as e:
             print(f"Fout bij ophalen endpoints: {e}")
             
+    # Eerst filteren als dat nodig is
     if tag_filter:
         endpoints = [ep for ep in endpoints if tag_filter in ep.get('tags', [])]
+        
+    # Daarna sorteren op basis van de parameter
+    if sort_by == 'tag':
+        # Sorteer op de eerste tag. Als er geen tag is, gebruik 'zzzz' zodat hij onderaan komt.
+        # Secundaire sort is op naam.
+        endpoints.sort(key=lambda x: (x['tags'][0].lower() if x['tags'] else 'zzzz', x['name'].lower()))
+    else:
+        # Default: Alfabetisch op naam
+        endpoints.sort(key=lambda x: x['name'].lower())
         
     return endpoints
 
@@ -503,7 +505,6 @@ def require_dashboard_auth(f):
 @app.context_processor
 def inject_sidebar_data():
     if request.endpoint and 'static' not in request.endpoint:
-        # Nu sturen we ook de tag_map mee naar alle templates
         return dict(all_tags=get_all_unique_tags(), tag_map=get_tag_color_map())
     return dict()
 
@@ -670,7 +671,6 @@ def endpoints_page():
         name = request.form.get('name')
         desc = request.form.get('description')
         tags = request.form.get('tags')
-        # GEWIJZIGD: Kleur niet meer hier
         
         success, err = create_endpoint(name, desc, tags)
         if success: flash(f"Endpoint '{name}' aangemaakt.", "success")
@@ -678,13 +678,16 @@ def endpoints_page():
         return redirect(url_for('endpoints_page'))
 
     tag_filter = request.args.get('tag')
-    endpoints = get_configured_endpoints(tag_filter=tag_filter)
+    sort_by = request.args.get('sort', 'alpha') # Standaard alfabetisch
+    
+    endpoints = get_configured_endpoints(tag_filter=tag_filter, sort_by=sort_by)
     for ep in endpoints:
         ep['stats'] = get_endpoint_stats(ep['name'])
         
     content = render_template_string(ENDPOINTS_CONTENT, 
                                      endpoints=endpoints, 
-                                     active_filter=tag_filter)
+                                     active_filter=tag_filter,
+                                     current_sort=sort_by)
     return render_template_string(BASE_LAYOUT, page='endpoints', page_content=content)
 
 @app.route('/endpoints/update', methods=['POST'])
@@ -693,7 +696,6 @@ def update_endpoint_route():
     name = request.form.get('name')
     desc = request.form.get('description')
     tags = request.form.get('tags')
-    # GEWIJZIGD: Kleur niet meer hier
     
     success, err = update_endpoint_metadata(name, desc, tags)
     if success: 
@@ -753,7 +755,6 @@ def client_detail(source_app):
                                    is_user=is_user)
     return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
 
-# --- NIEUWE ROUTE: TAGS UPDATEN ---
 @app.route('/settings/tags/update', methods=['POST'])
 @require_dashboard_auth
 def update_tag_route():
