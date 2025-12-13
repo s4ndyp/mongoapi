@@ -82,13 +82,6 @@ def format_size(size_bytes):
         i += 1
     return f"{size_bytes:.2f} {size_name[i]}"
 
-# --- Helper: Tag Kleur Generatie ---
-def get_tag_color_class(tag):
-    hash_object = hashlib.sha1(tag.encode())
-    hex_dig = hash_object.hexdigest()
-    color_index = int(hex_dig, 16) % 6
-    return f"tag-color-{color_index}"
-
 
 # --- Database Connectie & Indexen ---
 def ensure_indexes(db):
@@ -99,6 +92,9 @@ def ensure_indexes(db):
         db['api_keys'].create_index("client_id", unique=True, background=True)
         db['endpoints'].create_index("name", unique=True, background=True)
         db['users'].create_index("username", unique=True, background=True)
+        db['tag_settings'].create_index("tag", unique=True, background=True) # NIEUWE INDEX
+        
+        # Data indexen
         db['data_items'].create_index([("projectId", 1), ("type", 1)], background=True)
         db['data_projects'].create_index([("name", 1)], background=True)
         db['data_items'].create_index("meta.client_id", background=True)
@@ -148,19 +144,67 @@ def log_statistic(action, source_app, endpoint="default"):
         except Exception as e:
             print(f"Log error: {e}")
 
+# --- Tag Management Logic ---
+def get_tag_color_map():
+    """Haalt een dictionary op met {tag_naam: hex_kleur}."""
+    client, _ = get_db_connection()
+    tag_map = {}
+    
+    # Defaults
+    tag_map['system'] = '#6c757d'
+    tag_map['legacy'] = '#6c757d'
+    tag_map['taskey'] = '#0d6efd'
+    
+    if client:
+        try:
+            # Haal opgeslagen kleuren op uit nieuwe collectie
+            settings = client['api_gateway_db']['tag_settings'].find({})
+            for s in settings:
+                tag_map[s['tag']] = s['color']
+        except Exception as e:
+            print(f"Error fetching tag colors: {e}")
+            
+    return tag_map
+
+def update_tag_settings(original_name, new_name, color):
+    """Update naam en kleur van een tag. Werkt tags in endpoints bij als naam wijzigt."""
+    client, _ = get_db_connection()
+    if not client: return False, "No DB"
+    
+    db = client['api_gateway_db']
+    
+    try:
+        # 1. Als de naam verandert, update alle endpoints die deze tag gebruiken
+        if original_name != new_name:
+            # Check of nieuwe naam al bestaat om merges te voorkomen die verwarrend zijn (optioneel, hier toegestaan)
+            db['endpoints'].update_many(
+                {'tags': original_name},
+                {'$set': {'tags.$': new_name}}
+            )
+            # Verwijder oude instelling als die bestond
+            db['tag_settings'].delete_one({'tag': original_name})
+            
+        # 2. Sla de nieuwe instelling (kleur) op
+        db['tag_settings'].update_one(
+            {'tag': new_name},
+            {'$set': {'tag': new_name, 'color': color}},
+            upsert=True
+        )
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
 # --- Endpoint Management Functies ---
 def get_configured_endpoints(tag_filter=None):
     client, _ = get_db_connection()
     endpoints = []
     
-    # Systeem Endpoints (Legacy)
-    # Geef ze een standaard kleur (blauw/paars achtig)
+    # Systeem Endpoints 
     endpoints.append({
         'name': 'data',
         'description': 'Standaard Endpoint (Legacy / app_data)',
         'system': True,
         'tags': ['system', 'legacy'],
-        'color': '#6c757d', # Grijs
         'created_at': datetime.datetime.min
     })
     
@@ -169,7 +213,6 @@ def get_configured_endpoints(tag_filter=None):
         'description': 'Taskey Items (Taken en Notities)',
         'system': True,
         'tags': ['system', 'taskey'],
-        'color': '#0d6efd', # Blauw
         'created_at': datetime.datetime.min
     })
     endpoints.append({
@@ -177,7 +220,6 @@ def get_configured_endpoints(tag_filter=None):
         'description': 'Taskey Projecten',
         'system': True,
         'tags': ['system', 'taskey'],
-        'color': '#0d6efd', # Blauw
         'created_at': datetime.datetime.min
     })
 
@@ -188,9 +230,6 @@ def get_configured_endpoints(tag_filter=None):
                 if ep.get('name') not in ['data', 'items', 'projects']: 
                     ep['system'] = False
                     ep['tags'] = ep.get('tags', [])
-                    # Zorg voor een fallback kleur als deze nog niet bestaat in DB
-                    if 'color' not in ep:
-                         ep['color'] = '#198754' # Standaard groen
                     endpoints.append(ep)
         except Exception as e:
             print(f"Fout bij ophalen endpoints: {e}")
@@ -230,7 +269,7 @@ def process_tags_string(tags_str):
     if not tags_str: return []
     return [t.strip().lower() for t in tags_str.split(',') if t.strip()]
 
-def create_endpoint(name, description, tags_str, color):
+def create_endpoint(name, description, tags_str):
     if not re.match("^[a-zA-Z0-9_]+$", name):
         return False, "Naam mag alleen letters, cijfers en underscores bevatten."
     if name in ['data', 'items', 'projects']:
@@ -239,23 +278,20 @@ def create_endpoint(name, description, tags_str, color):
     if not client: return False, "No DB"
     
     tags = process_tags_string(tags_str)
-    # Default kleur als leeg
-    color = color if color else '#0d6efd'
     
     try:
         client['api_gateway_db']['endpoints'].insert_one({
             'name': name, 
             'description': description, 
             'tags': tags,
-            'color': color,
             'created_at': datetime.datetime.utcnow()
         })
         client['api_gateway_db'].create_collection(get_db_collection_name(name))
         return True, None
     except Exception as e: return False, str(e)
 
-def update_endpoint_metadata(name, description, tags_str, color):
-    """Update de beschrijving, tags EN kleur."""
+def update_endpoint_metadata(name, description, tags_str):
+    """Update de beschrijving en tags."""
     if name in ['data', 'items', 'projects']:
         return False, "Systeem endpoints kunnen niet worden gewijzigd."
         
@@ -263,15 +299,13 @@ def update_endpoint_metadata(name, description, tags_str, color):
     if not client: return False, "No DB"
     
     tags = process_tags_string(tags_str)
-    color = color if color else '#0d6efd'
     
     try:
         result = client['api_gateway_db']['endpoints'].update_one(
             {'name': name},
             {'$set': {
                 'description': description, 
-                'tags': tags,
-                'color': color
+                'tags': tags
             }}
         )
         if result.matched_count == 0:
@@ -465,10 +499,12 @@ def require_dashboard_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
+# --- CONTEXT PROCESSOR ---
 @app.context_processor
 def inject_sidebar_data():
     if request.endpoint and 'static' not in request.endpoint:
-        return dict(all_tags=get_all_unique_tags(), get_tag_color_class=get_tag_color_class)
+        # Nu sturen we ook de tag_map mee naar alle templates
+        return dict(all_tags=get_all_unique_tags(), tag_map=get_tag_color_map())
     return dict()
 
 # ---------------------------------------------------
@@ -634,9 +670,9 @@ def endpoints_page():
         name = request.form.get('name')
         desc = request.form.get('description')
         tags = request.form.get('tags')
-        color = request.form.get('color') # Nieuwe kleur parameter
+        # GEWIJZIGD: Kleur niet meer hier
         
-        success, err = create_endpoint(name, desc, tags, color)
+        success, err = create_endpoint(name, desc, tags)
         if success: flash(f"Endpoint '{name}' aangemaakt.", "success")
         else: flash(f"Fout: {err}", "danger")
         return redirect(url_for('endpoints_page'))
@@ -657,9 +693,9 @@ def update_endpoint_route():
     name = request.form.get('name')
     desc = request.form.get('description')
     tags = request.form.get('tags')
-    color = request.form.get('color') # Nieuwe kleur parameter
+    # GEWIJZIGD: Kleur niet meer hier
     
-    success, err = update_endpoint_metadata(name, desc, tags, color)
+    success, err = update_endpoint_metadata(name, desc, tags)
     if success: 
         flash(f"Endpoint '{name}' bijgewerkt.", "success")
     else: 
@@ -716,6 +752,29 @@ def client_detail(source_app):
                                    has_key=has_key,
                                    is_user=is_user)
     return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
+
+# --- NIEUWE ROUTE: TAGS UPDATEN ---
+@app.route('/settings/tags/update', methods=['POST'])
+@require_dashboard_auth
+def update_tag_route():
+    original_name = request.form.get('original_name')
+    new_name = request.form.get('new_name')
+    color = request.form.get('color')
+    
+    if not new_name:
+        flash("Naam mag niet leeg zijn", "danger")
+        return redirect(url_for('settings'))
+        
+    success, err = update_tag_settings(original_name, new_name, color)
+    if success:
+        if original_name != new_name:
+            flash(f"Tag hernoemd van '{original_name}' naar '{new_name}' en kleur opgeslagen.", "success")
+        else:
+            flash(f"Instellingen voor tag '{new_name}' opgeslagen.", "success")
+    else:
+        flash(f"Fout bij opslaan tag: {err}", "danger")
+        
+    return redirect(url_for('settings'))
 
 @app.route('/settings', methods=['GET', 'POST'])
 @require_dashboard_auth 
