@@ -34,7 +34,7 @@ BASE_LAYOUT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Gateway V2.1</title>
+    <title>API Gateway V2.2</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -56,27 +56,22 @@ BASE_LAYOUT = """
         }
         .tag-pill {
             font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 10px;
+            padding: 3px 10px;
+            border-radius: 12px;
             margin-right: 4px;
             text-decoration: none;
             display: inline-block;
+            font-weight: 600;
+            color: #fff;
+            text-shadow: 0px 1px 2px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
         }
-        .tag-pill:hover { opacity: 0.8; color: #fff !important; }
-        .tag-pill.active { border: 2px solid #0d6efd; background-color: transparent !important; color: #0d6efd !important; }
+        .tag-pill:hover { opacity: 0.9; color: #fff !important; }
+        .tag-pill.active { border: 2px solid #fff; box-shadow: 0 0 8px rgba(255,255,255,0.5); }
         
-        /* Tag Colors (Fallback if no custom color used) */
-        .tag-color-0 { background-color: #e67e22; color: #fff; } 
-        .tag-color-1 { background-color: #27ae60; color: #fff; } 
-        .tag-color-2 { background-color: #9b59b6; color: #fff; } 
-        .tag-color-3 { background-color: #3498db; color: #fff; } 
-        .tag-color-4 { background-color: #e74c3c; color: #fff; } 
-        .tag-color-5 { background-color: #1abc9c; color: #fff; } 
-        
-        /* Lijst weergave specifieke styling */
         .endpoint-row {
             transition: background-color 0.2s;
-            border-left-width: 5px; /* Dikkere rand voor de kleur */
+            border-left: 1px solid #333; /* Standaard border */
         }
         .endpoint-row:hover {
             background-color: #2c2c2c;
@@ -107,10 +102,11 @@ BASE_LAYOUT = """
                   <span>Filter op Tag</span>
                 </h6>
                 <div class="px-3">
-                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else get_tag_color_class('Alle') }}">Alle</a>
+                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') }}" style="background-color: #6c757d;">Alle</a>
                     {% for tag in all_tags %}
                         <a href="{{ url_for('endpoints_page', tag=tag) }}" 
-                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag else get_tag_color_class(tag) }}">
+                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag }}"
+                           style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">
                            {{ tag }}
                         </a>
                     {% endfor %}
@@ -122,7 +118,7 @@ BASE_LAYOUT = """
                     <div class="mt-2">
                         <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
                     </div>
-                    <div class="mt-4">Versie 3.0 (List View + Colors)</div>
+                    <div class="mt-4">Versie 3.1 (Tag Colors)</div>
                 </div>
             </nav>
             {% endif %}
@@ -319,7 +315,7 @@ ENDPOINTS_CONTENT = """
         <div>
             <h2>Endpoints Beheer</h2>
             {% if active_filter %}
-                <span class="tag-pill {{ get_tag_color_class(active_filter) }} active">Gefilterd op: {{ active_filter }}</span>
+                <span class="tag-pill active" style="background-color: {{ tag_map.get(active_filter, '#6c757d') }}">Gefilterd op: {{ active_filter }}</span>
                 <a href="/endpoints" class="btn btn-sm btn-outline-secondary ms-2">Reset</a>
             {% endif %}
         </div>
@@ -338,13 +334,13 @@ ENDPOINTS_CONTENT = """
 
     <div class="d-flex flex-column gap-2">
         {% for ep in endpoints %}
-        <div class="card endpoint-row border-0 mb-0" style="border-left-color: {{ ep.color }} !important;">
+        <div class="card endpoint-row border-0 mb-0">
             <div class="card-body py-2 d-flex align-items-center flex-wrap gap-2">
                 
                 <div class="d-flex align-items-center flex-grow-1 gap-3" style="min-width: 300px;">
                     <h5 class="m-0 font-monospace text-white text-nowrap" style="width: 180px;">
                         <a href="#" class="text-decoration-none text-white" 
-                           onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}', '{{ ep.color }}'); return false;">
+                           onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}'); return false;">
                            /api/{{ ep.name }}
                         </a>
                         {% if ep.system %}<i class="bi bi-shield-lock-fill small ms-1 text-muted" title="Systeem Endpoint"></i>{% endif %}
@@ -352,7 +348,7 @@ ENDPOINTS_CONTENT = """
                     
                     <div class="d-flex flex-wrap">
                         {% for tag in ep.tags %}
-                            <span class="tag-pill {{ get_tag_color_class(tag) }}">{{ tag }}</span>
+                            <span class="tag-pill" style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">{{ tag }}</span>
                         {% endfor %}
                     </div>
                 </div>
@@ -377,7 +373,7 @@ ENDPOINTS_CONTENT = """
 
                     {% if not ep.system %}
                     <button class="btn btn-sm btn-outline-secondary" 
-                            onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}', '{{ ep.color }}')" title="Bewerken">
+                            onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}')" title="Bewerken">
                         <i class="bi bi-pencil"></i>
                     </button>
                     <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert het endpoint {{ ep.name }} EN alle data. Doorgaan?');" class="m-0">
@@ -420,15 +416,9 @@ ENDPOINTS_CONTENT = """
                             <label class="form-label">Omschrijving</label>
                             <input type="text" name="description" class="form-control bg-black text-white">
                         </div>
-                        <div class="row">
-                            <div class="col-md-9 mb-3">
-                                <label class="form-label">Tags</label>
-                                <input type="text" name="tags" class="form-control bg-black text-white" placeholder="bv. extern, beta">
-                            </div>
-                            <div class="col-md-3 mb-3">
-                                <label class="form-label">Kleur</label>
-                                <input type="color" name="color" class="form-control form-control-color bg-dark w-100" value="#0d6efd" title="Kies een kleur">
-                            </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tags</label>
+                            <input type="text" name="tags" class="form-control bg-black text-white" placeholder="bv. extern, beta">
                         </div>
                     </div>
                     <div class="modal-footer border-secondary">
@@ -458,15 +448,9 @@ ENDPOINTS_CONTENT = """
                             <label class="form-label">Omschrijving</label>
                             <input type="text" name="description" id="edit-desc-input" class="form-control bg-black text-white">
                         </div>
-                        <div class="row">
-                            <div class="col-md-9 mb-3">
-                                <label class="form-label">Tags</label>
-                                <input type="text" name="tags" id="edit-tags-input" class="form-control bg-black text-white">
-                            </div>
-                            <div class="col-md-3 mb-3">
-                                <label class="form-label">Kleur</label>
-                                <input type="color" name="color" id="edit-color-input" class="form-control form-control-color bg-dark w-100">
-                            </div>
+                        <div class="mb-3">
+                             <label class="form-label">Tags</label>
+                             <input type="text" name="tags" id="edit-tags-input" class="form-control bg-black text-white">
                         </div>
                     </div>
                     <div class="modal-footer border-secondary">
@@ -479,20 +463,11 @@ ENDPOINTS_CONTENT = """
     </div>
     
     <script>
-    function openEditModal(name, desc, tags, color) {
+    function openEditModal(name, desc, tags) {
         document.getElementById('edit-name-display').value = name;
         document.getElementById('edit-name-input').value = name;
         document.getElementById('edit-desc-input').value = desc;
         document.getElementById('edit-tags-input').value = tags;
-        
-        // Zorg dat de kleur input een waarde heeft, anders default
-        const colorInput = document.getElementById('edit-color-input');
-        if (color && color !== 'None') {
-            colorInput.value = color;
-        } else {
-            colorInput.value = '#0d6efd';
-        }
-        
         var myModal = new bootstrap.Modal(document.getElementById('editEndpointModal'));
         myModal.show();
     }
@@ -555,7 +530,57 @@ CLIENT_DETAIL_CONTENT = """
 
 SETTINGS_CONTENT = """
     <h2>Instellingen</h2>
-    <div class="row mt-4">
+    
+    <div class="row mt-4 mb-4">
+        <div class="col-12">
+            <div class="card p-4 border-primary">
+                <h4 class="text-primary mb-3"><i class="bi bi-tags"></i> Tag Beheer</h4>
+                <p class="text-muted small">Beheer hier de kleuren en namen van de tags. Wijzigingen worden direct overal toegepast.</p>
+                
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width: 200px;">Huidige Tag</th>
+                                <th>Kleur Instelling</th>
+                                <th>Naam Wijzigen (Hernoemen)</th>
+                                <th class="text-end">Actie</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for tag in all_tags %}
+                            <tr>
+                                <form method="POST" action="/settings/tags/update">
+                                    <input type="hidden" name="original_name" value="{{ tag }}">
+                                    <td>
+                                        <span class="tag-pill" style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">{{ tag }}</span>
+                                    </td>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <input type="color" name="color" class="form-control form-control-color bg-dark border-secondary me-2" 
+                                                   value="{{ tag_map.get(tag, '#0d6efd') }}" title="Kies kleur">
+                                            <span class="text-muted small font-monospace">{{ tag_map.get(tag, '#0d6efd') }}</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <input type="text" name="new_name" class="form-control bg-black text-white" value="{{ tag }}">
+                                    </td>
+                                    <td class="text-end">
+                                        <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Opslaan</button>
+                                    </td>
+                                </form>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-center text-muted">Nog geen tags in gebruik.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
         <div class="col-md-6">
             <div class="card p-4">
                 <h5>Nieuwe Gebruiker Aanmaken</h5>
