@@ -34,7 +34,7 @@ BASE_LAYOUT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Gateway V2</title>
+    <title>API Gateway V2.2</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -56,36 +56,26 @@ BASE_LAYOUT = """
         }
         .tag-pill {
             font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 10px;
+            padding: 3px 10px;
+            border-radius: 12px;
             margin-right: 4px;
             text-decoration: none;
             display: inline-block;
+            font-weight: 600;
+            color: #fff;
+            text-shadow: 0px 1px 2px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
         }
-        .tag-pill:hover { opacity: 0.8; color: #fff !important; }
-        .tag-pill.active { border: 2px solid #0d6efd; background-color: transparent !important; color: #0d6efd !important; }
+        .tag-pill:hover { opacity: 0.9; color: #fff !important; }
+        .tag-pill.active { border: 2px solid #fff; box-shadow: 0 0 8px rgba(255,255,255,0.5); }
         
-        /* AANGEPAST: 20 Dynamische kleuren voor tags op basis van hash */
-        .tag-color-0 { background-color: #e67e22; color: #fff; } /* Oranje */
-        .tag-color-1 { background-color: #27ae60; color: #fff; } /* Groen */
-        .tag-color-2 { background-color: #9b59b6; color: #fff; } /* Paars */
-        .tag-color-3 { background-color: #3498db; color: #fff; } /* Blauw */
-        .tag-color-4 { background-color: #e74c3c; color: #fff; } /* Rood */
-        .tag-color-5 { background-color: #1abc9c; color: #fff; } /* Turqouise */
-        .tag-color-6 { background-color: #f1c40f; color: #000; } /* Geel */
-        .tag-color-7 { background-color: #95a5a6; color: #000; } /* Lichtgrijs */
-        .tag-color-8 { background-color: #d35400; color: #fff; } /* Donker Oranje */
-        .tag-color-9 { background-color: #2ecc71; color: #fff; } /* Emerald Groen */
-        .tag-color-10 { background-color: #8e44ad; color: #fff; } /* Donker Paars */
-        .tag-color-11 { background-color: #2980b9; color: #fff; } /* Donker Blauw */
-        .tag-color-12 { background-color: #c0392b; color: #fff; } /* Donker Rood */
-        .tag-color-13 { background-color: #16a085; color: #fff; } /* Donker Turqouise */
-        .tag-color-14 { background-color: #f39c12; color: #000; } /* Donker Geel */
-        .tag-color-15 { background-color: #7f8c8d; color: #fff; } /* Grijs */
-        .tag-color-16 { background-color: #bdc3c7; color: #000; } /* Heel Licht Grijs */
-        .tag-color-17 { background-color: #34495e; color: #fff; } /* Midnight Blue */
-        .tag-color-18 { background-color: #00b894; color: #fff; } /* Medium Turqouise */
-        .tag-color-19 { background-color: #fd79a8; color: #000; } /* Roze */
+        .endpoint-row {
+            transition: background-color 0.2s;
+            border-left: 1px solid #333; /* Standaard border */
+        }
+        .endpoint-row:hover {
+            background-color: #2c2c2c;
+        }
         
         {% if page == 'login' %}
         .container-fluid { height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -103,7 +93,7 @@ BASE_LAYOUT = """
                 <h4 class="mb-4 text-white"><i class="bi bi-hdd-network"></i> Gateway</h4>
                 <ul class="nav flex-column mb-4">
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'dashboard' else '' }}" href="/"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'endpoints' else '' }}" href="/endpoints"><i class="bi bi-diagram-3"></i> Endpoints</a></li>
+                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'endpoints' else '' }}" href="/endpoints"><i class="bi bi-list-ul"></i> Endpoints</a></li>
                     <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
                 </ul>
 
@@ -112,10 +102,11 @@ BASE_LAYOUT = """
                   <span>Filter op Tag</span>
                 </h6>
                 <div class="px-3">
-                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') else get_tag_color_class('Alle') }}">Alle</a>
+                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') }}" style="background-color: #6c757d;">Alle</a>
                     {% for tag in all_tags %}
                         <a href="{{ url_for('endpoints_page', tag=tag) }}" 
-                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag else get_tag_color_class(tag) }}">
+                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag }}"
+                           style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">
                            {{ tag }}
                         </a>
                     {% endfor %}
@@ -127,7 +118,7 @@ BASE_LAYOUT = """
                     <div class="mt-2">
                         <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
                     </div>
-                    <div class="mt-4">Versie 2.7 (Split + Clear Data)</div>
+                    <div class="mt-4">Versie 3.1 (Tag Colors)</div>
                 </div>
             </nav>
             {% endif %}
@@ -324,7 +315,7 @@ ENDPOINTS_CONTENT = """
         <div>
             <h2>Endpoints Beheer</h2>
             {% if active_filter %}
-                <span class="tag-pill {{ get_tag_color_class(active_filter) }} active">Gefilterd op: {{ active_filter }}</span>
+                <span class="tag-pill active" style="background-color: {{ tag_map.get(active_filter, '#6c757d') }}">Gefilterd op: {{ active_filter }}</span>
                 <a href="/endpoints" class="btn btn-sm btn-outline-secondary ms-2">Reset</a>
             {% endif %}
         </div>
@@ -333,58 +324,73 @@ ENDPOINTS_CONTENT = """
         </button>
     </div>
 
-    <div class="row">
+    <div class="d-none d-md-flex text-muted small text-uppercase px-3 mb-2">
+        <div style="width: 250px;">Endpoint / Badges</div>
+        <div class="flex-grow-1"></div>
+        <div class="text-end" style="width: 120px;">Records</div>
+        <div class="text-end" style="width: 120px;">Opslag</div>
+        <div class="text-end" style="width: 150px;">Acties</div>
+    </div>
+
+    <div class="d-flex flex-column gap-2">
         {% for ep in endpoints %}
-        <div class="col-md-6 col-xl-4">
-            <div class="card h-100 {{ 'border-info' if ep.system else '' }}">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="m-0 font-monospace {{ 'text-info' if ep.system else 'text-white' }}">
-                        /api/{{ ep.name }} 
-                        {% if ep.system %}<i class="bi bi-shield-lock-fill small ms-1" title="Systeem Endpoint"></i>{% endif %}
+        <div class="card endpoint-row border-0 mb-0">
+            <div class="card-body py-2 d-flex align-items-center flex-wrap gap-2">
+                
+                <div class="d-flex align-items-center flex-grow-1 gap-3" style="min-width: 300px;">
+                    <h5 class="m-0 font-monospace text-white text-nowrap" style="width: 180px;">
+                        <a href="#" class="text-decoration-none text-white" 
+                           onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}'); return false;">
+                           /api/{{ ep.name }}
+                        </a>
+                        {% if ep.system %}<i class="bi bi-shield-lock-fill small ms-1 text-muted" title="Systeem Endpoint"></i>{% endif %}
                     </h5>
                     
-                    <div class="d-flex gap-1">
-                        <form method="POST" action="/endpoints/clear_data" onsubmit="return confirm('WEET U HET ZEKER? Dit verwijdert ALLE {{ ep.stats.count }} records in {{ ep.name }}. Dit kan niet ongedaan worden gemaakt.');">
-                            <input type="hidden" name="name" value="{{ ep.name }}">
-                            <button type="submit" class="btn btn-sm btn-outline-warning" title="Maak endpoint leeg (verwijder data)">
-                                <i class="bi bi-eraser"></i>
-                            </button>
-                        </form>
-
-                        {% if not ep.system %}
-                        <button class="btn btn-sm btn-outline-secondary" 
-                                onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}')" title="Bewerken">
-                            <i class="bi bi-pencil"></i>
-                        </button>
-                        <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert het endpoint {{ ep.name }} EN alle data. Doorgaan?');">
-                            <input type="hidden" name="name" value="{{ ep.name }}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Verwijder Endpoint"><i class="bi bi-trash"></i></button>
-                        </form>
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted small">{{ ep.description }}</p>
-                    <div class="mb-3">
+                    <div class="d-flex flex-wrap">
                         {% for tag in ep.tags %}
-                            <span class="tag-pill {{ get_tag_color_class(tag) }}">{{ tag }}</span>
+                            <span class="tag-pill" style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">{{ tag }}</span>
                         {% endfor %}
                     </div>
-                    <div class="row text-center mt-3">
-                        <div class="col-6 border-end border-secondary">
-                            <small class="text-muted">Records</small>
-                            <div class="fs-5">{{ ep.stats.count }}</div>
-                        </div>
-                        <div class="col-6">
-                            <small class="text-muted">Opslag</small>
-                            <div class="fs-5 text-warning">{{ ep.stats.size }}</div>
-                        </div>
-                    </div>
+                </div>
+
+                <div class="text-end text-muted d-flex align-items-center justify-content-end" style="width: 120px;">
+                    <span class="d-md-none me-2 small">Records:</span>
+                    <span class="fs-6">{{ ep.stats.count }}</span>
+                </div>
+
+                <div class="text-end text-warning d-flex align-items-center justify-content-end" style="width: 120px;">
+                    <span class="d-md-none me-2 small text-muted">Opslag:</span>
+                    <span class="fs-6">{{ ep.stats.size }}</span>
+                </div>
+
+                <div class="d-flex gap-1 justify-content-end align-items-center" style="width: 150px;">
+                    <form method="POST" action="/endpoints/clear_data" onsubmit="return confirm('WEET U HET ZEKER? Dit verwijdert ALLE {{ ep.stats.count }} records in {{ ep.name }}.');" class="m-0">
+                        <input type="hidden" name="name" value="{{ ep.name }}">
+                        <button type="submit" class="btn btn-sm btn-outline-warning" title="Maak endpoint leeg">
+                            <i class="bi bi-eraser"></i>
+                        </button>
+                    </form>
+
+                    {% if not ep.system %}
+                    <button class="btn btn-sm btn-outline-secondary" 
+                            onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}')" title="Bewerken">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert het endpoint {{ ep.name }} EN alle data. Doorgaan?');" class="m-0">
+                        <input type="hidden" name="name" value="{{ ep.name }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Verwijder Endpoint"><i class="bi bi-trash"></i></button>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
+            {% if ep.description %}
+            <div class="card-footer py-1 bg-transparent border-0">
+                 <small class="text-muted fst-italic ms-1">{{ ep.description }}</small>
+            </div>
+            {% endif %}
         </div>
         {% else %}
-        <div class="col-12 text-center text-muted py-5">
+        <div class="text-center text-muted py-5">
             <h4>Geen endpoints gevonden.</h4>
         </div>
         {% endfor %}
@@ -405,7 +411,6 @@ ENDPOINTS_CONTENT = """
                                 <span class="input-group-text bg-secondary text-white">/api/</span>
                                 <input type="text" name="name" class="form-control bg-black text-white" required pattern="[a-zA-Z0-9_]+" placeholder="products">
                             </div>
-                            <div class="form-text text-muted">Gereserveerd: 'data', 'items', 'projects'</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Omschrijving</label>
@@ -413,8 +418,7 @@ ENDPOINTS_CONTENT = """
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Tags</label>
-                            <input type="text" name="tags" class="form-control bg-black text-white" placeholder="bv. extern, beta, intern">
-                            <div class="form-text text-muted">Komma gescheiden labels voor filtering.</div>
+                            <input type="text" name="tags" class="form-control bg-black text-white" placeholder="bv. extern, beta">
                         </div>
                     </div>
                     <div class="modal-footer border-secondary">
@@ -445,8 +449,8 @@ ENDPOINTS_CONTENT = """
                             <input type="text" name="description" id="edit-desc-input" class="form-control bg-black text-white">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Tags</label>
-                            <input type="text" name="tags" id="edit-tags-input" class="form-control bg-black text-white" placeholder="bv. extern, beta">
+                             <label class="form-label">Tags</label>
+                             <input type="text" name="tags" id="edit-tags-input" class="form-control bg-black text-white">
                         </div>
                     </div>
                     <div class="modal-footer border-secondary">
@@ -464,7 +468,6 @@ ENDPOINTS_CONTENT = """
         document.getElementById('edit-name-input').value = name;
         document.getElementById('edit-desc-input').value = desc;
         document.getElementById('edit-tags-input').value = tags;
-        
         var myModal = new bootstrap.Modal(document.getElementById('editEndpointModal'));
         myModal.show();
     }
@@ -527,7 +530,57 @@ CLIENT_DETAIL_CONTENT = """
 
 SETTINGS_CONTENT = """
     <h2>Instellingen</h2>
-    <div class="row mt-4">
+    
+    <div class="row mt-4 mb-4">
+        <div class="col-12">
+            <div class="card p-4 border-primary">
+                <h4 class="text-primary mb-3"><i class="bi bi-tags"></i> Tag Beheer</h4>
+                <p class="text-muted small">Beheer hier de kleuren en namen van de tags. Wijzigingen worden direct overal toegepast.</p>
+                
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width: 200px;">Huidige Tag</th>
+                                <th>Kleur Instelling</th>
+                                <th>Naam Wijzigen (Hernoemen)</th>
+                                <th class="text-end">Actie</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for tag in all_tags %}
+                            <tr>
+                                <form method="POST" action="/settings/tags/update">
+                                    <input type="hidden" name="original_name" value="{{ tag }}">
+                                    <td>
+                                        <span class="tag-pill" style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">{{ tag }}</span>
+                                    </td>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <input type="color" name="color" class="form-control form-control-color bg-dark border-secondary me-2" 
+                                                   value="{{ tag_map.get(tag, '#0d6efd') }}" title="Kies kleur">
+                                            <span class="text-muted small font-monospace">{{ tag_map.get(tag, '#0d6efd') }}</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <input type="text" name="new_name" class="form-control bg-black text-white" value="{{ tag }}">
+                                    </td>
+                                    <td class="text-end">
+                                        <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Opslaan</button>
+                                    </td>
+                                </form>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-center text-muted">Nog geen tags in gebruik.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
         <div class="col-md-6">
             <div class="card p-4">
                 <h5>Nieuwe Gebruiker Aanmaken</h5>
