@@ -34,4 +34,4 @@ jobs:
         context: . # Zoek naar Dockerfile in de root van de repository
         push: true # Zorg ervoor dat de image na het bouwen wordt geüpload.
         # Tag formaat voor GHCR: ghcr.io/GEBRUIKER/REPO_NAAM:tag
-        tags: ghcr.io/${{ github.repository }}:beta
+        tags: ghcr.io/${{ github.repository }}:latest
