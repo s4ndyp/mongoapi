@@ -34,7 +34,7 @@ BASE_LAYOUT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Gateway V2.2</title>
+    <title>API Gateway V2.3</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -71,7 +71,7 @@ BASE_LAYOUT = """
         
         .endpoint-row {
             transition: background-color 0.2s;
-            border-left: 1px solid #333; /* Standaard border */
+            border-left: 1px solid #333; 
         }
         .endpoint-row:hover {
             background-color: #2c2c2c;
@@ -104,7 +104,7 @@ BASE_LAYOUT = """
                 <div class="px-3">
                     <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') }}" style="background-color: #6c757d;">Alle</a>
                     {% for tag in all_tags %}
-                        <a href="{{ url_for('endpoints_page', tag=tag) }}" 
+                        <a href="{{ url_for('endpoints_page', tag=tag, sort=request.args.get('sort')) }}" 
                            class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag }}"
                            style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">
                            {{ tag }}
@@ -118,7 +118,7 @@ BASE_LAYOUT = """
                     <div class="mt-2">
                         <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
                     </div>
-                    <div class="mt-4">Versie 3.1 (Tag Colors)</div>
+                    <div class="mt-4">Versie 3.2 (Sorting)</div>
                 </div>
             </nav>
             {% endif %}
@@ -316,12 +316,35 @@ ENDPOINTS_CONTENT = """
             <h2>Endpoints Beheer</h2>
             {% if active_filter %}
                 <span class="tag-pill active" style="background-color: {{ tag_map.get(active_filter, '#6c757d') }}">Gefilterd op: {{ active_filter }}</span>
-                <a href="/endpoints" class="btn btn-sm btn-outline-secondary ms-2">Reset</a>
+                <a href="{{ url_for('endpoints_page', sort=current_sort) }}" class="btn btn-sm btn-outline-secondary ms-2">Reset Filter</a>
             {% endif %}
         </div>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
-            <i class="bi bi-plus-lg"></i> Nieuw Endpoint
-        </button>
+        
+        <div class="d-flex gap-2">
+            <div class="dropdown">
+                <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <i class="bi bi-sort-down"></i> Sorteer: {{ 'Op Tag' if current_sort == 'tag' else 'Alfabetisch' }}
+                </button>
+                <ul class="dropdown-menu dropdown-menu-dark shadow">
+                    <li>
+                        <a class="dropdown-item {{ 'active' if current_sort == 'alpha' }}" 
+                           href="{{ url_for('endpoints_page', sort='alpha', tag=active_filter) }}">
+                           <i class="bi bi-sort-alpha-down"></i> Alfabetisch (A-Z)
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item {{ 'active' if current_sort == 'tag' }}" 
+                           href="{{ url_for('endpoints_page', sort='tag', tag=active_filter) }}">
+                           <i class="bi bi-tags"></i> Op Tag
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
+                <i class="bi bi-plus-lg"></i> Nieuw Endpoint
+            </button>
+        </div>
     </div>
 
     <div class="d-none d-md-flex text-muted small text-uppercase px-3 mb-2">
