@@ -3,7 +3,9 @@ name: Docker CI/CD voor API Gateway
 on:
   push:
     branches: [ "beta" ] # Start de workflow bij een push naar de 'main' branch
-
+  workflow_dispatch:
+   
+    
 jobs:
   build_and_push:
     runs-on: ubuntu-latest
