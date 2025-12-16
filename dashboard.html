@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Iconen: Lucide Icons -->
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             background-color: #0d1117; /* Dark Background */
@@ -128,9 +128,10 @@
                 <!-- Tab Navigatie -->
                 <div class="flex border-b border-[#30363d] space-x-4">
                     <button id="tab-api-keys" class="tab-btn active" data-tab="keys">API Sleutels & Beheer</button>
-                    <button id="tab-api-test" class="tab-btn" data-tab="api-test">Sessie Test</button>
+                    <button id="tab-api-test" class="tab-btn" data-tab="api-test">API Client Test</button>
                     <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Collecties & Migratie</button>
                     <button id="tab-activity" class="tab-btn" data-tab="activity">Activiteit</button>
+                    <button id="tab-profile" class="tab-btn" data-tab="profile">Profiel</button>
                 </div>
 
                 <!-- Tab Content -->
@@ -165,18 +166,39 @@
                         </div>
                     </div>
 
-                    <!-- 2. API Test (GET met JWT/Cookie) - VEREENVOUDIGD -->
+                    <!-- 2. API Client Test (GET met Client ID/Key) -->
                     <div id="content-api-test" class="hidden">
                          <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-blue-400">Dashboard Sessie Test</h3>
-                            <p class="text-sm text-gray-400 mb-4">Voert een <code>GET /api/dashboard</code> aanroep uit met uw huidige inlog-cookie om de actieve sessie en backend-connectiviteit te testen.</p>
-
-                            <button id="execute-test-btn" class="btn-primary py-2 px-4 rounded-md font-semibold flex-shrink-0">Sessie Test Uitvoeren</button>
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-blue-400">Universele API Client Test (GET)</h3>
+                            <p class="text-sm text-gray-400 mb-4">Voert een **GET**-aanvraag uit op de beveiligde universele route, geautoriseerd met de geselecteerde Client ID en API Key.</p>
+                            
+                            <div class="space-y-4">
+                                <div class="flex space-x-4">
+                                    <div class="flex-grow">
+                                        <label for="test-client-id" class="block text-sm font-medium text-gray-400">Selecteer Client ID (voor autorisatie)</label>
+                                        <select id="test-client-id" class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm" required>
+                                            <option value="">-- Selecteer een Client ID --</option>
+                                        </select>
+                                        <div id="test-selected-client-key" class="mt-2 p-2 bg-[#0d1117] border border-gray-700 rounded text-xs font-mono hidden"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex space-x-3 items-end">
+                                    <div class="flex-grow">
+                                        <label for="test-endpoint-path" class="block text-sm font-medium text-gray-400">Endpoint Pad</label>
+                                        <div class="flex items-center">
+                                            <span class="text-gray-400 mr-2 text-lg font-mono">/api/</span>
+                                            <input type="text" id="test-endpoint-path" placeholder="bijv. users of users/document_id" value="test_data" class="flex-grow px-3 py-2 border border-gray-700 rounded-md shadow-sm">
+                                        </div>
+                                    </div>
+                                    <button id="execute-client-test-btn" class="btn-primary py-2 px-4 rounded-md font-semibold flex-shrink-0">GET Uitvoeren</button>
+                                </div>
+                            </div>
                             
                             <div id="test-message" class="p-3 mb-4 mt-4 rounded-lg text-sm hidden"></div>
 
                             <div class="mt-4">
-                                <p class="text-sm font-medium mb-1">Respons Body van /api/dashboard:</p>
+                                <p class="text-sm font-medium mb-1">Respons:</p>
                                 <pre id="test-response-pre" class="bg-gray-900 p-3 rounded-lg overflow-x-auto text-sm font-mono max-h-96">Resultaat verschijnt hier...</pre>
                             </div>
                         </div>
@@ -241,6 +263,38 @@
                             </ul>
                         </div>
                     </div>
+                    
+                    <!-- 5. Profiel Wijzigen (Profile Tab) -->
+                    <div id="content-profile" class="hidden">
+                        <div class="card p-6 w-full max-w-lg mx-auto">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Admin Profiel Wijzigen</h3>
+                            <div id="profile-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
+                            
+                            <form id="profile-form" class="space-y-4">
+                                <div>
+                                    <label for="current-username" class="block text-sm font-medium text-gray-400">Huidige Gebruikersnaam</label>
+                                    <input type="text" id="current-username" readonly class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-gray-400 cursor-not-allowed">
+                                </div>
+                                
+                                <div>
+                                    <label for="new-profile-username" class="block text-sm font-medium text-gray-400">Nieuwe Gebruikersnaam (Optioneel)</label>
+                                    <input type="text" id="new-profile-username" placeholder="Laat leeg om niet te wijzigen" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md">
+                                </div>
+                                
+                                <div>
+                                    <label for="new-profile-password" class="block text-sm font-medium text-gray-400">Nieuw Wachtwoord (Optioneel, min. 8 tekens)</label>
+                                    <input type="password" id="new-profile-password" placeholder="Laat leeg om niet te wijzigen" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md">
+                                </div>
+
+                                <div>
+                                    <label for="old-profile-password" class="block text-sm font-medium text-gray-400">Bevestig Huidig Wachtwoord (Verplicht)</label>
+                                    <input type="password" id="old-profile-password" required class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md">
+                                </div>
+
+                                <button type="submit" class="btn-primary w-full py-2 px-4 rounded-md font-semibold">Profiel Opslaan</button>
+                            </form>
+                        </div>
+                    </div>
 
                 </div>
 
@@ -268,12 +322,15 @@
         const activityList = document.getElementById('activity-list');
         const oldEndpointsList = document.getElementById('old-endpoints-list');
         
-        // Nieuwe elementen voor API Test
-        const executeTestBtn = document.getElementById('execute-test-btn');
+        // Elementen voor API Test
+        const testClientSelect = document.getElementById('test-client-id');
+        const testClientKeyDiv = document.getElementById('test-selected-client-key');
+        const testEndpointPathInput = document.getElementById('test-endpoint-path');
+        const executeClientTestBtn = document.getElementById('execute-client-test-btn');
         const testResponseMessage = document.getElementById('test-message');
         const testResponsePre = document.getElementById('test-response-pre');
         
-        // Nieuwe elementen voor Endpoint Creation
+        // Elementen voor Endpoint Creation
         const createEndpointForm = document.getElementById('create-endpoint-form');
         const createEndpointMessage = document.getElementById('create-endpoint-message');
         const newEndpointNameInput = document.getElementById('new-endpoint-name');
@@ -281,13 +338,21 @@
         const postClientIdSelect = document.getElementById('post-client-id');
         const selectedClientKeyDiv = document.getElementById('selected-client-key');
         
-        // Nieuwe elementen voor Scan/Conversie
+        // Elementen voor Scan/Conversie
         const collectionScanTable = document.getElementById('collection-scan-table');
         const scanMessage = document.getElementById('scan-message');
+        
+        // Elementen voor Profiel
+        const profileForm = document.getElementById('profile-form');
+        const currentUsernameInput = document.getElementById('current-username');
+        const newProfileUsernameInput = document.getElementById('new-profile-username');
+        const newProfilePasswordInput = document.getElementById('new-profile-password');
+        const oldProfilePasswordInput = document.getElementById('old-profile-password');
+        const profileMessage = document.getElementById('profile-message');
 
 
         let currentUserId = null;
-        let activeClientKeys = []; // Array om keys lokaal op te slaan
+        let activeClientKeys = []; // Array om keys lokaal op te slaan (inclusief keys)
 
         // --- Hulpfuncties ---
         function showMessage(element, text, isError = false) {
@@ -326,6 +391,9 @@
                 if (tab === 'old-endpoints') {
                     loadCollectionScan();
                 }
+                if (tab === 'profile') {
+                    loadAdminProfile();
+                }
             });
         });
 
@@ -363,28 +431,73 @@
             }
         }
 
-        // --- API Test Handler (Gebruikt de Dashboard Sessie) ---
-        executeTestBtn.addEventListener('click', async () => {
-            hideMessage(testResponseMessage);
-            testResponsePre.textContent = 'Bezig met laden...';
-
-            try {
-                testResponsePre.textContent = 'Test van de Dashboard Sessie (GET /api/dashboard)...';
-
-                const response = await safeFetch('/dashboard', { method: 'GET' });
-                
-                // Formatteer de respons netjes
-                const formattedResponse = JSON.stringify(response, null, 2);
-
-                testResponsePre.textContent = formattedResponse;
-                showMessage(testResponseMessage, "GET /api/dashboard succesvol uitgevoerd via cookie-sessie.", false);
-
-            } catch (error) {
-                testResponsePre.textContent = JSON.stringify({ error: error.message }, null, 2);
-                showMessage(testResponseMessage, `Fout bij testen: ${error.message}`, true);
+        // --- NIEUW: API Client Test Handler (GET met Client ID/Key) ---
+        testClientSelect.addEventListener('change', () => {
+            const clientId = testClientSelect.value;
+            const client = activeClientKeys.find(k => k.client_id === clientId);
+            if (client) {
+                testClientKeyDiv.textContent = `Key: ${client.key}`;
+                testClientKeyDiv.classList.remove('hidden');
+            } else {
+                testClientKeyDiv.textContent = '';
+                testClientKeyDiv.classList.add('hidden');
             }
         });
         
+        executeClientTestBtn.addEventListener('click', async () => {
+            hideMessage(testResponseMessage);
+            testResponsePre.textContent = 'Bezig met laden...';
+
+            const endpointPath = testEndpointPathInput.value.trim();
+            const clientId = testClientSelect.value;
+            const client = activeClientKeys.find(k => k.client_id === clientId);
+
+            if (!client) {
+                testResponsePre.textContent = 'Selecteer een geldige Client ID.';
+                showMessage(testResponseMessage, 'Selecteer een geldige Client ID voor de test.', true);
+                return;
+            }
+            if (!endpointPath) {
+                testResponsePre.textContent = 'Vul een geldig pad in.';
+                showMessage(testResponseMessage, 'Vul een geldig pad in.', true);
+                return;
+            }
+
+            // Gebruik de universele data-endpoint URL
+            const url = `${API_BASE_URL}/${endpointPath}`;
+            
+            try {
+                // Voer de GET uit met Client API Headers
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'x-client-id': client.client_id,
+                        'x-api-key': client.key
+                    }
+                });
+                
+                let data = null;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    data = { message: "Geen JSON antwoord", status: response.status };
+                }
+                
+                const formattedResponse = JSON.stringify(data, null, 2);
+
+                testResponsePre.textContent = formattedResponse;
+
+                if (response.ok) {
+                    showMessage(testResponseMessage, `GET /api/${endpointPath} succesvol uitgevoerd (Status: ${response.status}).`, false);
+                } else {
+                    showMessage(testResponseMessage, `GET mislukt (Status: ${response.status}). Controleer de logs en het pad.`, true);
+                }
+            } catch (error) {
+                testResponsePre.textContent = JSON.stringify({ error: error.message }, null, 2);
+                showMessage(testResponseMessage, `Netwerkfout bij GET aanroep: ${error.message}`, true);
+            }
+        });
+
         // --- Collectie Aanmaak en Selectie Logica ---
         postClientIdSelect.addEventListener('change', () => {
             const clientId = postClientIdSelect.value;
@@ -449,7 +562,6 @@
                 if (response.ok) {
                     showMessage(createEndpointMessage, `Endpoint /api/${endpointName} succesvol aangemaakt (ID: ${responseData.id}).`, false);
                     newEndpointNameInput.value = '';
-                    // Houd de data voor het gemak vast, maar maak de textarea schoon
                     initialDataTextarea.value = JSON.stringify({ "created_by": "admin", "description": "Another placeholder document." }, null, 4); 
                     loadDashboard(); // Herlaad om nieuwe endpoint in de lijst te tonen
                 } else {
@@ -460,14 +572,15 @@
             }
         });
 
-        // --- NIEUW: Scan en Conversie Logica ---
+        // --- Scan en Conversie Logica ---
 
         async function loadCollectionScan() {
             hideMessage(scanMessage);
             collectionScanTable.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">Bezig met scannen...</td></tr>';
             
             try {
-                const scanData = await safeFetch('/collections/scan');
+                // Gebruik de dashboard sessie (cookie) om de scan uit te voeren
+                const scanData = await safeFetch('/collections/scan'); 
                 renderCollectionScanTable(scanData);
             } catch (error) {
                 showMessage(scanMessage, `Fout bij scannen: ${error.message}`, true);
@@ -531,6 +644,7 @@
              showMessage(scanMessage, `Conversie van ${collectionName} gestart...`, false);
 
              try {
+                // Gebruik de dashboard sessie (cookie) om de beheeractie uit te voeren
                 const response = await safeFetch('/collections/convert', {
                     method: 'POST',
                     body: JSON.stringify({ collection_name: collectionName, client_id: clientId })
@@ -544,6 +658,64 @@
              }
         }
         
+        // --- Profiel Logica ---
+        async function loadAdminProfile() {
+            hideMessage(profileMessage);
+            try {
+                const data = await safeFetch('/admin/profile');
+                currentUsernameInput.value = data.username;
+                newProfileUsernameInput.value = '';
+                newProfilePasswordInput.value = '';
+                oldProfilePasswordInput.value = '';
+                
+            } catch (error) {
+                 showMessage(profileMessage, `Fout bij laden profiel: ${error.message}`, true);
+            }
+        }
+        
+        profileForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessage(profileMessage);
+
+            const oldPassword = oldProfilePasswordInput.value;
+            const newUsername = newProfileUsernameInput.value.trim();
+            const newPassword = newProfilePasswordInput.value.trim();
+            
+            if (!oldPassword) {
+                 showMessage(profileMessage, "Huidig wachtwoord is verplicht om wijzigingen op te slaan.", true);
+                 return;
+            }
+            if (newPassword && newPassword.length < 8) {
+                showMessage(profileMessage, "Nieuw wachtwoord moet minimaal 8 tekens bevatten.", true);
+                return;
+            }
+
+            const payload = {
+                old_password: oldPassword
+            };
+            if (newUsername) payload.new_username = newUsername;
+            if (newPassword) payload.new_password = newPassword;
+            
+            try {
+                const response = await safeFetch('/admin/profile', {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                });
+                
+                if (response.new_username) {
+                    showMessage(profileMessage, `Profiel succesvol bijgewerkt. U moet opnieuw inloggen met de nieuwe gegevens.`, false);
+                    handleLogout(true); // Log uit na succesvolle naamswijziging
+                } else {
+                    showMessage(profileMessage, response.message, false);
+                    loadAdminProfile(); // Herlaad om velden te resetten
+                }
+
+            } catch (error) {
+                 showMessage(profileMessage, `Fout bij opslaan: ${error.message}`, true);
+            }
+        });
+
+
         // --- Authenticatie Handlers ---
 
         loginForm.addEventListener('submit', async (e) => {
@@ -587,11 +759,11 @@
             try {
                 const dashboardData = await safeFetch('/dashboard');
                 const settingsData = await safeFetch('/settings');
+                
+                // Active Keys array wordt bijgewerkt met de volledige keys
+                activeClientKeys = settingsData.api_keys; 
 
                 toggleScreens(true);
-
-                // Keys opslaan voor gebruik in POST formulier en conversie
-                activeClientKeys = settingsData.api_keys; 
 
                 // Dashboard Samenvatting
                 currentUserId = dashboardData.user_id;
@@ -606,15 +778,10 @@
                 // API Keys
                 renderApiKeys(settingsData.api_keys);
                 
-                // Client ID Selector voor POST
-                populateClientKeySelector(settingsData.api_keys);
+                // Client ID Selectors vullen
+                populateClientKeySelector(settingsData.api_keys, postClientIdSelect);
+                populateClientKeySelector(settingsData.api_keys, testClientSelect);
                 
-                // Initialiseer de scan als het tabblad de actieve is
-                if (document.getElementById('content-old-endpoints').classList.contains('hidden')) {
-                    // Start de scan pas bij de klik op het tabblad
-                } else {
-                    loadCollectionScan();
-                }
                 
             } catch (error) {
                 console.error("Dashboard laadfout:", error);
@@ -626,16 +793,17 @@
 
         // --- Rendering Functies ---
         
-        function populateClientKeySelector(keys) {
-            postClientIdSelect.innerHTML = '<option value="">-- Selecteer een Client ID --</option>';
+        function populateClientKeySelector(keys, selectElement) {
+            selectElement.innerHTML = '<option value="">-- Selecteer een Client ID --</option>';
             keys.forEach(client => {
                 const option = document.createElement('option');
                 option.value = client.client_id;
                 option.textContent = `${client.client_id} (${client.description})`;
-                postClientIdSelect.appendChild(option);
+                selectElement.appendChild(option);
             });
-            selectedClientKeyDiv.textContent = '';
-            selectedClientKeyDiv.classList.add('hidden');
+            // Wis eventuele gekoppelde key displays
+            if (selectElement === postClientIdSelect) selectedClientKeyDiv.classList.add('hidden');
+            if (selectElement === testClientSelect) testClientKeyDiv.classList.add('hidden');
         }
         
         function renderActivity(activity) {
