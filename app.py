@@ -450,6 +450,103 @@ def api_logout():
     resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, samesite='Lax')
     return resp
 
+# --- NIEUW: Scan Endpoints op Weesdata ---
+@app.route('/api/collections/scan', methods=['GET'])
+@check_auth
+def api_collections_scan():
+    db = get_db()
+    if db is None: return jsonify({"error": "Database connection error"}), 503
+
+    system_collections = ['users', 'clients', 'statistics', 'system.indexes']
+    user_endpoints = [name for name in db.list_collection_names() if name not in system_collections]
+    
+    collection_stats = []
+
+    for name in user_endpoints:
+        collection = db[name]
+        try:
+            total_count = collection.count_documents({})
+            # Zoek documenten die GEEN meta.client_id veld hebben
+            orphan_count = collection.count_documents({
+                '$or': [
+                    {'meta.client_id': {'$exists': False}},
+                    {'meta.client_id': None}
+                ]
+            })
+
+            collection_stats.append({
+                'name': name,
+                'total_documents': total_count,
+                'orphan_documents': orphan_count
+            })
+        except Exception as e:
+            # Kan gebeuren als een collectie corrupt is of als een view wordt gebruikt
+            collection_stats.append({
+                'name': name,
+                'error': f'Kon documenten niet tellen: {str(e)}'
+            })
+            
+    return jsonify(collection_stats)
+
+
+@app.route('/api/collections/convert', methods=['POST'])
+@check_auth
+def api_collections_convert():
+    """
+    Update alle weesdocumenten in een gespecificeerde collectie met de opgegeven Client ID.
+    Dit is een beheerdersactie, beveiligd door JWT.
+    """
+    db = get_db()
+    if db is None: return jsonify({"error": "Database connection error"}), 503
+
+    data = request.get_json()
+    collection_name = data.get('collection_name')
+    client_id = data.get('client_id')
+
+    if not collection_name or not client_id:
+        return jsonify({"error": "Collectie naam en Client ID zijn vereist."}), 400
+    
+    # 1. Valideer de Client ID
+    client = db.clients.find_one({'_id': client_id, 'revoked': False})
+    if not client:
+        return jsonify({"error": "Ongeldige Client ID: de doel-client bestaat niet."}), 400
+    
+    # 2. Bepaal de collectie
+    system_collections = ['users', 'clients', 'statistics', 'system.indexes']
+    if collection_name in system_collections:
+        return jsonify({"error": "Kan geen systeemcollectie converteren."}), 403
+    
+    collection = db[collection_name]
+    
+    # 3. Voer de update uit
+    # Criteria: Documenten zonder meta.client_id of met meta.client_id = None
+    update_filter = {
+        '$or': [
+            {'meta.client_id': {'$exists': False}},
+            {'meta.client_id': None}
+        ]
+    }
+    
+    # Update operatie: zet meta.client_id en meta.updated_at
+    update_operation = {
+        '$set': {
+            'meta.client_id': client_id,
+            'meta.updated_at': datetime.datetime.utcnow()
+        }
+    }
+    
+    try:
+        # update_many voert de conversie uit
+        result = collection.update_many(update_filter, update_operation)
+
+        return jsonify({
+            'message': f'{result.modified_count} documenten in collectie "{collection_name}" zijn geconverteerd en toegewezen aan Client ID "{client_id}".',
+            'modified_count': result.modified_count
+        })
+    except Exception as e:
+        return jsonify({"error": f"Fout bij conversie: {str(e)}"}), 500
+
+
 @app.route('/api/dashboard', methods=['GET'])
 @check_auth
 def api_dashboard():
@@ -484,10 +581,9 @@ def api_dashboard():
     serialized_endpoint_stats = format_mongo_doc(endpoint_stats)
     serialized_recent_activity = format_mongo_doc(recent_activity)
     
-    # FIX: Er was ook een probleem met ObjectId in de user documenten (niet getoond in trace, maar zeker aanwezig)
-    # Ik serialiseer de clients die in api_settings worden gebruikt ook alvast hier, om zeker te zijn:
-    # Nee, api_settings wordt direct door de frontend geladen, maar de client data is niet in de dashboard respons.
-
+    # NIEUW: Collectie statistieken worden nu via /api/collections/scan geladen
+    # Dit voorkomt een trage load voor het dashboard zelf
+    
     return jsonify({
         'user_id': user_id,
         'summary': {
@@ -497,7 +593,7 @@ def api_dashboard():
         },
         'top_endpoints': serialized_endpoint_stats,
         'recent_activity': serialized_recent_activity,
-        'all_collections': user_endpoints
+        'all_collections': user_endpoints # Nu alleen de namen
     })
 
 
