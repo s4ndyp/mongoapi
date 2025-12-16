@@ -5,7 +5,7 @@ import secrets
 import string
 import re
 from functools import wraps
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session, make_response
+from flask import Flask, request, jsonify, redirect, url_for, flash, make_response
 from flask_cors import CORS 
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
@@ -18,24 +18,13 @@ import jwt
 from bcrypt import hashpw, gensalt, checkpw
 import hashlib 
 
-# IMPORT Templates (Niet inbegrepen, maar functionele structuur behouden)
-# from templates import (LOGIN_CONTENT, BASE_LAYOUT, DASHBOARD_CONTENT, ENDPOINTS_CONTENT, CLIENT_DETAIL_CONTENT, SETTINGS_CONTENT)
-# Voor deze demonstratie gebruiken we placeholder templates
-
-LOGIN_CONTENT = "Login UI"
-BASE_LAYOUT = "<html><head><title>Universal API</title></head><body>{0}</body></html>"
-DASHBOARD_CONTENT = "Dashboard UI"
-ENDPOINTS_CONTENT = "Endpoints List"
-CLIENT_DETAIL_CONTENT = "Client Detail"
-SETTINGS_CONTENT = "Settings UI"
-
 # --- Globale Configuratie ---
 DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 MONGO_CLIENT = None
 app = Flask(__name__)
 
-# CORS aangepast
-CORS(app, supports_credentials=True) 
+# CORS aangepast om credentials (cookies) toe te staan vanuit de frontend
+CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000", "http://localhost:5000"]) 
 
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
@@ -93,13 +82,13 @@ def check_auth(f):
     def decorated_function(*args, **kwargs):
         token = request.cookies.get(app.config['JWT_COOKIE_NAME'])
         if not token:
-            flash('Sessie verlopen, log opnieuw in.', 'warning')
-            return redirect(url_for('dashboard_login'))
+            # Stuur een JSON 401 Unauthorized antwoord
+            return jsonify({'error': 'Unauthorized', 'message': 'Sessie verlopen of ontbreekt.'}), 401
 
         payload = decode_jwt(token)
         if not payload:
-            flash('Ongeldige of verlopen token, log opnieuw in.', 'warning')
-            return redirect(url_for('dashboard_login'))
+            # Stuur een JSON 401 Unauthorized antwoord
+            return jsonify({'error': 'Unauthorized', 'message': 'Ongeldige of verlopen token.'}), 401
         
         # User ID in de g-object opslaan
         g = globals()
@@ -126,8 +115,7 @@ def check_api_key(f):
         if not client:
             return jsonify({"error": "Invalid client ID or API key."}), 401
         
-        # 2. Rate Limiting (Moet hier geïntegreerd worden als Limiter niet op Flask-niveau wordt gebruikt)
-        # Voor deze simpele Flask-versie vertrouwen we op de globale Limiter configuratie.
+        # 2. Rate Limiting (Globale Limiter wordt gebruikt)
         
         # Sla de client_id op in de g-object voor de endpoint functie
         g = globals()
@@ -136,22 +124,17 @@ def check_api_key(f):
     return decorated_function
 
 # --- Rate Limiter Setup (Globale rate limit) ---
-# De huidige Limiter-configuratie is globaal en werkt goed.
 limiter = Limiter(
     app,
     key_func=get_remote_address,
     default_limits=["1000 per hour", "50 per minute"]
 )
-# We overschrijven de key_func voor API-calls met de client_id om per API key te limieten.
 @limiter.request_filter
 def check_client_id_for_limit():
     client_id = request.headers.get('x-client-id') or request.args.get('client_id')
     if client_id:
-        # Dit zorgt ervoor dat de client_id wordt gebruikt als de rate limit key
-        # We moeten wel een custom rate limit decorator maken om dit effectief te gebruiken
-        # Voor nu houden we de standaard get_remote_address voor alle routes
-        # Tenzij we de Limiter-logica naar binnen de check_api_key decorator verplaatsen.
-        return False # Doorgaan met de standaard key_func (IP-adres)
+        return False 
+    return False
 
 # --- Endpoint Logica ---
 
@@ -183,12 +166,10 @@ def create_initial_admin(db):
         print(f"Wachtwoord: {admin_pass}\n")
         
 # --- API Route (Universeel Pad) ---
-
-# De Flask route gebruikt <path:endpoint_path> om elk pad na /api/ op te vangen.
-# Voorbeelden: /api/users, /api/users/doc_id, /api/group/resource, /api/group/resource/doc_id
 @app.route('/api/<path:endpoint_path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @check_api_key
 def data_endpoint(endpoint_path):
+    # ... [CRUD logica blijft ongewijzigd] ...
     # Globale vars (client_id is ingesteld door check_api_key)
     g = globals()
     client_id = g['client_id']
@@ -386,40 +367,47 @@ def data_endpoint(endpoint_path):
     return jsonify({"error": "Method not allowed for this route."}), 405
 
 
-# --- Dashboard Routes (Behouden van de structuur) ---
+# --- Dashboard API Routes (Niet langer HTML-rendering) ---
 
-# De rest van de dashboard/admin routes blijven ongewijzigd
-
-@app.route('/', methods=['GET', 'POST'])
-def dashboard_login():
-    # Login logica...
+@app.route('/api/login', methods=['POST'])
+def api_login():
     db = get_db()
     if db:
-        create_initial_admin(db)
+        create_initial_admin(db) # Zorgt voor de admin als deze niet bestaat
 
-    if request.method == 'POST':
-        # ... [Authenticatie logica] ...
-        username = request.form.get('username')
-        password = request.form.get('password')
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    user = db.users.find_one({'username': username})
+
+    if user and check_password(password, user['password']):
+        token = generate_jwt(user['username'])
         
-        user = db.users.find_one({'username': username})
+        # De JWT wordt in een HTTP-only cookie gezet voor beveiliging
+        resp = make_response(jsonify({'message': 'Login succesvol'}), 200)
+        resp.set_cookie(
+            app.config['JWT_COOKIE_NAME'], 
+            token, 
+            httponly=True, 
+            secure=app.config.get('ENV') == 'production', # Alleen true in prod
+            samesite='Lax',
+            max_age=app.config['JWT_EXPIRY_MINUTES'] * 60 # seconden
+        )
+        return resp
+    else:
+        return jsonify({'error': 'Ongeldige gebruikersnaam of wachtwoord'}), 401
 
-        if user and check_password(password, user['password']):
-            token = generate_jwt(user['username'])
-            resp = make_response(redirect(url_for('dashboard')))
-            resp.set_cookie(app.config['JWT_COOKIE_NAME'], token, httponly=True, secure=True, samesite='Lax')
-            return resp
-        else:
-            flash('Ongeldige gebruikersnaam of wachtwoord.', 'danger')
+@app.route('/api/logout', methods=['POST'])
+def api_logout():
+    # Cookie onmiddellijk laten verlopen
+    resp = make_response(jsonify({'message': 'Succesvol uitgelogd'}), 200)
+    resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, samesite='Lax')
+    return resp
 
-    return render_template_string(BASE_LAYOUT.format(LOGIN_CONTENT))
-
-
-@app.route('/dashboard')
+@app.route('/api/dashboard', methods=['GET'])
 @check_auth
-def dashboard():
-    # Dashboard logica...
-    # ... [Ophalen van data voor dashboard] ...
+def api_dashboard():
     db = get_db()
     g = globals()
     user_id = g['user_id']
@@ -437,69 +425,89 @@ def dashboard():
     recent_activity = list(db.statistics.find().sort('timestamp', -1).limit(20))
     
     # Haal de totale tellingen op
-    total_endpoints = len(db.list_collection_names()) - 4 # Minus system collections
+    collection_names = db.list_collection_names()
+    # Filter de interne collecties (users, clients, statistics, system.indexes)
+    total_endpoints = len([name for name in collection_names if name not in ['users', 'clients', 'statistics', 'system.indexes']])
     total_clients = db.clients.count_documents({})
     total_calls = db.statistics.count_documents({})
+    
+    # Formatteer tijdstempels voor JSON
+    def format_doc(doc):
+        doc['timestamp'] = doc['timestamp'].isoformat()
+        return doc
 
-    return render_template_string(BASE_LAYOUT.format(DASHBOARD_CONTENT), 
-                                  endpoint_stats=endpoint_stats, 
-                                  recent_activity=recent_activity,
-                                  total_endpoints=total_endpoints,
-                                  total_clients=total_clients,
-                                  total_calls=total_calls,
-                                  user_id=user_id)
+    return jsonify({
+        'user_id': user_id,
+        'summary': {
+            'endpoints_count': total_endpoints,
+            'clients_count': total_clients,
+            'calls_count': total_calls
+        },
+        'top_endpoints': endpoint_stats,
+        'recent_activity': [format_doc(doc) for doc in recent_activity]
+    })
 
 
-@app.route('/logout')
-def logout():
-    # Logout logica...
-    resp = make_response(redirect(url_for('dashboard_login')))
-    resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, secure=True, samesite='Lax')
-    flash('U bent uitgelogd.', 'success')
-    return resp
-
-
-@app.route('/settings', methods=['GET', 'POST'])
+@app.route('/api/settings', methods=['GET', 'POST', 'DELETE'])
 @check_auth
-def settings():
-    # Instellingen/Client beheer logica...
+def api_settings():
     db = get_db()
     g = globals()
     user_id = g['user_id']
     
-    if request.method == 'POST':
-        action = request.form.get('action')
-        
-        if action == 'generate_key':
-            description = request.form.get('description')
-            client_id = secrets.token_hex(8)
-            client_key = secrets.token_urlsafe(32)
-            
-            db.clients.insert_one({
-                '_id': client_id, 
-                'key': client_key, 
-                'user_id': user_id, 
-                'description': description,
-                'created_at': datetime.datetime.utcnow(),
-                'revoked': False
+    if request.method == 'GET':
+        # Haal alle keys op voor de ingelogde gebruiker
+        api_keys = []
+        for client in db.clients.find({'user_id': user_id, 'revoked': False}):
+            api_keys.append({
+                'client_id': client['_id'], 
+                'key': client['key'], 
+                'description': client.get('description', 'N/A'),
+                'created_at': client['created_at'].isoformat()
             })
-            flash(f'Nieuwe API Sleutel ({client_id}) gegenereerd.', 'success')
-            
-        elif action == 'revoke_key':
-            client_id_to_revoke = request.form.get('client_id')
-            db.clients.update_one(
-                {'_id': client_id_to_revoke, 'user_id': user_id},
-                {'$set': {'revoked': True}}
-            )
-            flash(f'API Sleutel ({client_id_to_revoke}) ingetrokken.', 'info')
-            
-        return redirect(url_for('settings'))
+        return jsonify({'api_keys': api_keys, 'user_id': user_id})
 
-    api_keys = {}
-    for client in db.clients.find({'user_id': user_id, 'revoked': False}):
-        api_keys[client['_id']] = {'key': client['key'], 'description': client['description']}
+    elif request.method == 'POST':
+        # Genereer een nieuwe key
+        data = request.get_json()
+        description = data.get('description', 'Nieuwe client')
         
-    return render_template_string(BASE_LAYOUT.format(SETTINGS_CONTENT), api_keys=api_keys, user_id=user_id)
+        client_id = secrets.token_hex(8)
+        client_key = secrets.token_urlsafe(32)
+        
+        db.clients.insert_one({
+            '_id': client_id, 
+            'key': client_key, 
+            'user_id': user_id, 
+            'description': description,
+            'created_at': datetime.datetime.utcnow(),
+            'revoked': False
+        })
+        
+        return jsonify({
+            'message': 'Nieuwe API Sleutel gegenereerd', 
+            'client_id': client_id, 
+            'client_key': client_key
+        }), 201
+
+    elif request.method == 'DELETE':
+        # Trek een key in (revoke)
+        data = request.get_json()
+        client_id_to_revoke = data.get('client_id')
+
+        if not client_id_to_revoke:
+            return jsonify({'error': 'Client ID ontbreekt.'}), 400
+
+        result = db.clients.update_one(
+            {'_id': client_id_to_revoke, 'user_id': user_id},
+            {'$set': {'revoked': True}}
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({'error': 'Client ID niet gevonden of geen toegang.'}), 404
+        
+        return jsonify({'message': f'API Sleutel ({client_id_to_revoke}) ingetrokken.'}), 200
+
 
 if __name__ == '__main__':
     # Initialisatie van de DB en admin
