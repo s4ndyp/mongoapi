@@ -124,11 +124,13 @@ def check_api_key(f):
     return decorated_function
 
 # --- Rate Limiter Setup (Globale rate limit) ---
+# FIX: Pas de initialisatie aan naar het init_app patroon om de TypeError op te lossen.
 limiter = Limiter(
-    app,
     key_func=get_remote_address,
     default_limits=["1000 per hour", "50 per minute"]
 )
+limiter.init_app(app)
+
 @limiter.request_filter
 def check_client_id_for_limit():
     client_id = request.headers.get('x-client-id') or request.args.get('client_id')
