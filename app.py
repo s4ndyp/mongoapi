@@ -1,56 +1,105 @@
 import os
+import datetime
 import json
 import secrets
-import datetime
-import io
+import re
 from functools import wraps
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for, flash, session, send_file, make_response
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, flash, make_response
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson import ObjectId, json_util
 
-# ------------------------------------------------------------------------------
-# IMPORT HTML TEMPLATES (Uit je templates.py)
-# ------------------------------------------------------------------------------
+# Imports voor beveiliging (uit oude bestand)
+import jwt
+from bcrypt import hashpw, gensalt, checkpw
+
+# IMPORT HTML TEMPLATES (Zorg dat templates.py in dezelfde map staat)
 from templates import LOGIN_CONTENT, DASHBOARD_CONTENT
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey_change_this')
+app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
 
 # ------------------------------------------------------------------------------
 # CONFIGURATIE & DB
 # ------------------------------------------------------------------------------
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/')
 client = MongoClient(MONGO_URI)
-db = client['api_gateway_v2']  # Database
+db = client['api_gateway_v2']  # Nieuwe database naam
 
-# Metadata collectie
+# Collecties
 endpoints_meta = db['system_endpoints']
+users_col = db['users']
 
-# JWT instellingen (voor de login beveiliging)
-import jwt
-APP_USER = "admin"
-APP_PASS = "admin123"  # <--- WIJZIG DIT IN PRODUCTIE
-JWT_SECRET = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
+# JWT Config (overgenomen uit oude bestand)
+app.config['JWT_SECRET'] = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
+app.config['JWT_EXPIRY_MINUTES'] = 60 * 24  # 24 uur
+app.config['JWT_COOKIE_NAME'] = 'auth_token'
 
 # ------------------------------------------------------------------------------
-# AUTHENTICATIE DECORATOR
+# BEVEILIGING HELPERS (uit oude bestand)
+# ------------------------------------------------------------------------------
+def hash_password(password):
+    return hashpw(password.encode('utf-8'), gensalt()).decode('utf-8')
+
+def check_password_hash(password, hashed):
+    return checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def encode_auth_token(user_id):
+    try:
+        payload = {
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=app.config['JWT_EXPIRY_MINUTES']),
+            'iat': datetime.datetime.utcnow(),
+            'sub': str(user_id)
+        }
+        return jwt.encode(payload, app.config.get('JWT_SECRET'), algorithm='HS256')
+    except Exception as e:
+        print(f"JWT Error: {e}")
+        return None
+
+def decode_auth_token(auth_token):
+    try:
+        payload = jwt.decode(auth_token, app.config.get('JWT_SECRET'), algorithms=['HS256'])
+        return (True, payload['sub'])
+    except jwt.ExpiredSignatureError:
+        return (False, 'Token is verlopen.')
+    except jwt.InvalidTokenError:
+        return (False, 'Ongeldig token.')
+
+def create_initial_user():
+    """Maakt automatisch een admin user aan als er nog geen users zijn."""
+    if users_col.count_documents({}) == 0:
+        print("--- GEEN GEBRUIKERS GEVONDEN: MAAK STANDAARD ADMIN AAN ---")
+        users_col.insert_one({
+            "username": "admin",
+            "password_hash": hash_password("admin123"),
+            "created_at": datetime.datetime.utcnow()
+        })
+        print("--- ADMIN AANGEMAAKT (user: admin / pass: admin123) ---")
+
+# Voer check uit bij opstarten
+create_initial_user()
+
+# ------------------------------------------------------------------------------
+# AUTH DECORATOR
 # ------------------------------------------------------------------------------
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.cookies.get('auth_token')
+        token = request.cookies.get(app.config['JWT_COOKIE_NAME'])
+        
         if not token:
             return redirect(url_for('login'))
-        try:
-            jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        except:
+        
+        success, result = decode_auth_token(token)
+        if not success:
+            flash(result, "error") # Toon reden (verlopen/ongeldig)
             return redirect(url_for('login'))
+            
         return f(*args, **kwargs)
     return decorated
 
 # ------------------------------------------------------------------------------
-# LOGIN ROUTES
+# LOGIN & LOGOUT ROUTES
 # ------------------------------------------------------------------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -58,35 +107,46 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        if username == APP_USER and password == APP_PASS:
-            token = jwt.encode({
-                'user': username,
-                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-            }, JWT_SECRET, algorithm="HS256")
+        user = users_col.find_one({'username': username})
+        
+        if user and check_password_hash(password, user['password_hash']):
+            token = encode_auth_token(user['_id'])
             
             resp = make_response(redirect(url_for('dashboard')))
-            resp.set_cookie('auth_token', token, httponly=True)
+            # HttpOnly cookie instellen (veiliger)
+            resp.set_cookie(
+                app.config['JWT_COOKIE_NAME'], 
+                token, 
+                httponly=True, 
+                secure=False, # Zet op True als je HTTPS gebruikt
+                samesite='Lax'
+            )
             return resp
         else:
-            flash("Ongeldige inloggegevens", "error")
+            flash("Ongeldige gebruikersnaam of wachtwoord", "error")
             
     return render_template_string(LOGIN_CONTENT)
 
 @app.route('/logout')
 def logout():
     resp = make_response(redirect(url_for('login')))
-    resp.set_cookie('auth_token', '', expires=0)
+    resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0)
+    flash("Succesvol uitgelogd", "success")
     return resp
 
 # ------------------------------------------------------------------------------
-# DASHBOARD ROUTES (Beveiligd met @token_required)
+# DASHBOARD ROUTES
 # ------------------------------------------------------------------------------
+def get_data_collection_name(app_name, endpoint_name):
+    safe_app = "".join(x for x in app_name if x.isalnum() or x in "_-")
+    safe_end = "".join(x for x in endpoint_name if x.isalnum() or x in "_-")
+    return f"data_{safe_app}_{safe_end}"
+
 @app.route('/')
 @token_required
 def dashboard():
     selected_app = request.args.get('app')
     
-    # Haal alle metadata op
     all_metas = list(endpoints_meta.find().sort("app_name", 1))
     unique_apps = sorted(list(set([m['app_name'] for m in all_metas])))
     
@@ -95,7 +155,6 @@ def dashboard():
     else:
         filtered_endpoints = all_metas
 
-    # Voeg statistieken toe
     for ep in filtered_endpoints:
         col_name = get_data_collection_name(ep['app_name'], ep['endpoint_name'])
         ep['doc_count'] = db[col_name].count_documents({})
@@ -106,14 +165,8 @@ def dashboard():
                                   selected_app=selected_app)
 
 # ------------------------------------------------------------------------------
-# BEHEER (Create, Rename, Delete) - Beveiligd
+# BEHEER ROUTES
 # ------------------------------------------------------------------------------
-
-def get_data_collection_name(app_name, endpoint_name):
-    safe_app = "".join(x for x in app_name if x.isalnum() or x in "_-")
-    safe_end = "".join(x for x in endpoint_name if x.isalnum() or x in "_-")
-    return f"data_{safe_app}_{safe_end}"
-
 @app.route('/manage/add', methods=['POST'])
 @token_required
 def add_endpoint():
@@ -220,8 +273,10 @@ def import_data(app_name, endpoint_name):
     return redirect(url_for('dashboard', app=app_name))
 
 # ------------------------------------------------------------------------------
-# PUBLIEKE API ROUTES (Hier kan iedereen bij, of voeg auth toe indien gewenst)
+# PUBLIEKE API ROUTES
 # ------------------------------------------------------------------------------
+import io
+from flask import send_file
 
 def serialize(doc):
     doc['id'] = str(doc['_id'])
@@ -230,6 +285,9 @@ def serialize(doc):
 
 @app.route('/api/<app_name>/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
 def api_handler(app_name, endpoint_name):
+    # API endpoints zijn publiek. Wil je ze beveiligen? 
+    # Voeg dan @token_required toe onder de @app.route regel.
+    
     meta = endpoints_meta.find_one({"app_name": app_name, "endpoint_name": endpoint_name})
     if not meta: return jsonify({"error": "Endpoint not found"}), 404
     
@@ -246,7 +304,6 @@ def api_handler(app_name, endpoint_name):
         return jsonify({"id": str(res.inserted_id)}), 201
         
     if request.method == 'DELETE':
-        # Let op: Publieke delete verwijdert alles? Misschien beveiligen!
         col.delete_many({})
         return jsonify({"status": "cleared"}), 200
 
