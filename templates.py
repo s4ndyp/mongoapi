@@ -139,14 +139,17 @@ LOGIN_CONTENT = """
     <script>
         function loadDbConfig() {
             // Haal de DB-configuratie op uit Local Storage en vul de hidden fields
-            document.getElementById('db_host').value = localStorage.getItem('db_host') || '';
-            document.getElementById('db_port').value = localStorage.getItem('db_port') || '';
+            const host = localStorage.getItem('db_host');
+            const port = localStorage.getItem('db_port');
+
+            document.getElementById('db_host').value = host || '';
+            document.getElementById('db_port').value = port || '';
             document.getElementById('db_user').value = localStorage.getItem('db_user') || '';
             document.getElementById('db_pass').value = localStorage.getItem('db_pass') || '';
 
-            // Controleer of de gegevens ontbreken. Zo ja, redirect naar setup.
-            if (!document.getElementById('db_host').value || !document.getElementById('db_port').value) {
-                window.location.href = '/';
+            // Als de DB-configuratie ontbreekt, forceer naar setup
+            if (!host || !port) {
+                window.location.href = '/setup';
                 return false;
             }
             return true;
@@ -158,397 +161,399 @@ LOGIN_CONTENT = """
             localStorage.removeItem('db_port');
             localStorage.removeItem('db_user');
             localStorage.removeItem('db_pass');
-            window.location.href = '/';
+            window.location.href = '/setup';
         }
 
         // Zorg dat de gegevens geladen worden voordat het formulier wordt ingediend
-        window.onload = loadDbConfig;
+        document.addEventListener('DOMContentLoaded', loadDbConfig);
+        
+        // Dubbele check: als de pagina laadt via /login en de config mist
+        if (window.location.pathname === '/login') {
+            loadDbConfig();
+        }
     </script>
 </body>
 </html>
 """
 
-### 3. `app.py` (De herschreven serverlogica)
-De `app.py` is nu volledig afhankelijk van de gegevens die de browser meestuurt tijdens de login. Dit voorkomt de `config.json` problemen.
-
-```python
-import os
-import datetime
-import json
-import secrets
-import time
-import urllib.parse
-from functools import wraps
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for, flash, make_response
-from flask_cors import CORS
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
-from bson import ObjectId, json_util
-
-# Security Libraries
-import jwt 
-from bcrypt import hashpw, gensalt, checkpw
-
-# TEMPLATES
-from templates import LOGIN_CONTENT, DASHBOARD_CONTENT, SETUP_CONTENT, MIGRATION_HTML
-
-app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'super-key-change-me')
-CORS(app)
-
 # ------------------------------------------------------------------------------
-# 1. GLOBALE STATUS (Wordt pas gevuld na succesvolle login)
+# 3. MIGRATIE PAGINA
 # ------------------------------------------------------------------------------
-# We gebruiken deze nu om de status te behouden gedurende de sessie.
-mongo_client = None
-db = None
-db_host_str = "Nog niet verbonden"
-
-# Configuratie
-JWT_SECRET = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
-JWT_COOKIE = 'auth_token'
-
-# ------------------------------------------------------------------------------
-# 2. DYNAMISCHE DB VERBINDING & HELPERS
-# ------------------------------------------------------------------------------
-
-def get_db_connection_dynamic(host, port, user="", password=""):
-    """Probeert dynamisch een MongoDB-verbinding te maken."""
-    try:
-        if user and password:
-            safe_user = urllib.parse.quote_plus(user)
-            safe_pass = urllib.parse.quote_plus(password)
-            uri = f"mongodb://{safe_user}:{safe_pass}@{host}:{port}/?authSource=admin"
-        else:
-            uri = f"mongodb://{host}:{port}/"
+MIGRATION_HTML = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Migratie Tool</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; padding: 2rem; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { margin-bottom: 2rem; border-bottom: 1px solid #334155; padding-bottom: 1rem; }
+        .card { background: #1e293b; padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 1rem; border: 1px solid #334155; display: flex; align-items: center; justify-content: space-between; }
+        .old-name { font-family: monospace; font-size: 1.1rem; color: #cbd5e1; }
+        .form-inline { display: flex; gap: 10px; align-items: center; }
+        input { background: #0f172a; border: 1px solid #475569; color: white; padding: 0.5rem; border-radius: 0.25rem; }
+        button { background: #2563eb; color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.25rem; cursor: pointer; }
+        button:hover { background: #1d4ed8; }
+        .badge { background: #ef4444; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; margin-right: 10px; }
+        .btn-back { display: inline-block; margin-bottom: 20px; color: #94a3b8; text-decoration: none; }
+        .btn-back:hover { color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="btn-back"><i class="fas fa-arrow-left"></i> Terug naar Dashboard</a>
+        <h1><i class="fas fa-magic"></i> Database Migratie</h1>
         
-        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-        client.server_info()
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div style="background: #166534; color: #86efac; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <p style="color: #94a3b8; margin-bottom: 2rem;">
+            Hieronder staan database collecties die nog niet gekoppeld zijn aan de nieuwe structuur. 
+            Geef ze een Applicatie- en Endpointnaam om ze te importeren.
+        </p>
+
+        {% for col in orphans %}
+        <div class="card">
+            <div>
+                <span class="badge">Oud</span>
+                <span class="old-name">{{ col }}</span>
+                <div style="font-size: 0.8rem; color: #64748b; margin-top: 5px;">{{ counts[col] }} documenten</div>
+            </div>
+            <form class="form-inline" action="/migrate/do" method="POST">
+                <input type="hidden" name="old_name" value="{{ col }}">
+                <input type="text" name="new_app" placeholder="App Naam" required>
+                <input type="text" name="new_ep" placeholder="Endpoint" required>
+                <button type="submit">Migreer</button>
+            </form>
+        </div>
+        {% else %}
+            <div style="text-align: center; color: #64748b; padding: 3rem;">
+                <i class="fas fa-check-circle" style="font-size: 2rem; color: #22c55e;"></i><br><br>
+                Geen ongekoppelde collecties gevonden. Alles is up-to-date!
+            </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
+"""
+
+# ------------------------------------------------------------------------------
+# 4. DASHBOARD (Full App)
+# ------------------------------------------------------------------------------
+DASHBOARD_CONTENT = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>API Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --primary: #3b82f6; --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --text-muted: #94a3b8; --border: #334155; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Sidebar */
+        .sidebar { width: 260px; background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 1.5rem; }
+        .logo { font-size: 1.3rem; font-weight: 700; color: #fff; margin-bottom: 2rem; display: flex; align-items: center; gap: 10px; }
+        .nav-item { display: flex; align-items: center; padding: 0.75rem 1rem; color: var(--text-muted); text-decoration: none; border-radius: 0.5rem; margin-bottom: 0.25rem; transition: 0.2s; }
+        .nav-item:hover, .nav-item.active { background: #334155; color: #fff; }
+        .nav-item i { width: 24px; }
+        .section-title { font-size: 0.75rem; text-transform: uppercase; color: #64748b; margin: 1.5rem 0 0.5rem 0.5rem; font-weight: 600; }
+
+        /* Main */
+        .main { flex: 1; overflow-y: auto; padding: 2rem; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+        h1 { font-size: 1.8rem; font-weight: 600; }
         
-        # Verbreek de verbinding als het de test doorstaat. Wordt opnieuw gemaakt bij succesvolle login.
-        return client, client['api_gateway_v2'], host
-    except Exception as e:
-        print(f"DB Connection Test Failed: {e}")
-        return None, None, None
+        /* Dashboard Stats Cards */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .stat-card { background: var(--card); padding: 1.5rem; border-radius: 1rem; border: 1px solid var(--border); }
+        .stat-label { color: var(--text-muted); font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; }
+        .stat-value { font-size: 1.8rem; font-weight: 700; margin-top: 0.5rem; color: #fff; }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; }
+        .status-online { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+        .status-offline { background: #ef4444; }
 
-def hash_pass(p): return hashpw(p.encode('utf-8'), gensalt()).decode('utf-8')
-def check_pass(p, h): return checkpw(p.encode('utf-8'), h.encode('utf-8'))
-
-def create_initial_user(database):
-    """Maakt admin user aan in de APPLICATIE database."""
-    try:
-        if database['users'].count_documents({}) == 0:
-            database['users'].insert_one({
-                "username": "admin",
-                "password_hash": hash_pass("admin123"),
-                "token_validity_hours": 24,
-                "created_at": datetime.datetime.utcnow()
-            })
-            print("Default admin user created.")
-    except Exception as e:
-        print(f"Error creating initial user: {e}")
-
-def log_activity(endpoint="system"):
-    if db: db['access_logs'].insert_one({"endpoint": endpoint, "timestamp": datetime.datetime.utcnow()})
-def log_failed_login(username):
-    if db: db['failed_logins'].insert_one({"username": username, "timestamp": datetime.datetime.utcnow(), "ip": request.remote_addr})
-
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not db: return redirect(url_for('setup_page'))
-        token = request.cookies.get(JWT_COOKIE)
-        if not token: return redirect(url_for('login'))
-        try: jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        except: return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated
-
-# ------------------------------------------------------------------------------
-# 3. SETUP & INDEX ROUTING
-# ------------------------------------------------------------------------------
-@app.route('/')
-def index():
-    # Dit is de entry point. Als de globale verbinding nog niet is gezet,
-    # sturen we de gebruiker naar de setup-pagina om de config op te halen.
-    global db
-    if db:
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('setup_page'))
-
-@app.route('/setup')
-def setup_page():
-    # Toon de setup pagina (deze pagina handelt opslag in Local Storage af)
-    return render_template_string(SETUP_CONTENT)
-
-# ------------------------------------------------------------------------------
-# 4. LOGIN ROUTE (De cruciale aanpassing)
-# ------------------------------------------------------------------------------
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    global mongo_client, db, db_host_str
-
-    if request.method == 'POST':
-        # 1. Haal ALLE inloggegevens op (DB én Applicatie)
-        db_host = request.form.get('db_host')
-        db_port = request.form.get('db_port')
-        db_user = request.form.get('db_user', '')
-        db_pass = request.form.get('db_pass', '')
+        /* Tables & Lists */
+        .card-panel { background: var(--card); border-radius: 1rem; border: 1px solid var(--border); overflow: hidden; margin-bottom: 2rem; }
+        .panel-header { padding: 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: #1e293b; }
+        .panel-title { font-size: 1.1rem; font-weight: 600; }
         
-        app_user = request.form.get('username')
-        app_pass = request.form.get('password')
-
-        # 2. Test/maak DB Connectie met de meegestuurde credentials
-        temp_client, temp_db, temp_host = get_db_connection_dynamic(db_host, db_port, db_user, db_pass)
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem 1.5rem; text-align: left; border-bottom: 1px solid var(--border); }
+        th { color: var(--text-muted); font-weight: 500; font-size: 0.85rem; text-transform: uppercase; background: #182236; }
+        tr:hover { background: #243046; }
+        td { font-size: 0.95rem; }
         
-        if not temp_db:
-            # Als DB Connectie mislukt, flash error en stuur terug naar login. 
-            # De browser behoudt de DB-config in Local Storage.
-            flash("Fout: Kan geen verbinding maken met de database. Controleer de serverinstellingen (IP/Poort).", "error")
-            return redirect(url_for('login'))
+        /* Buttons */
+        .btn { padding: 0.5rem 1rem; border-radius: 0.4rem; border: none; cursor: pointer; font-size: 0.9rem; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; color: white; }
+        .btn-primary { background: var(--primary); }
+        .btn-danger { background: #ef4444; }
+        .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+        .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+        .btn-ghost:hover { background: #334155; color: white; }
+
+        /* Modal */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+        .modal.active { display: flex; }
+        .modal-content { background: var(--card); padding: 2rem; width: 100%; max-width: 500px; border-radius: 1rem; border: 1px solid var(--border); }
         
-        # 3. DB Connectie is gelukt! Zorg dat de Admin user bestaat (eerste keer)
-        create_initial_user(temp_db)
-
-        # 4. App Login check
-        user = temp_db['users'].find_one({'username': app_user})
+        .form-group { margin-bottom: 1rem; }
+        .form-label { display: block; margin-bottom: 0.5rem; color: var(--text-muted); font-size: 0.9rem; }
+        .form-input, .form-select { width: 100%; padding: 0.6rem; background: #0f172a; border: 1px solid var(--border); color: white; border-radius: 0.4rem; }
         
-        if user and check_pass(app_pass, user['password_hash']):
-            # Success! Sla de connectie globaal op in de server-sessie (globals)
-            mongo_client, db, db_host_str = temp_client, temp_db, temp_host
-            
-            hours = user.get('token_validity_hours', 24)
-            exp_time = datetime.datetime.utcnow() + datetime.timedelta(hours=hours)
-            token = jwt.encode({'sub': str(user['_id']), 'exp': exp_time}, JWT_SECRET, algorithm='HS256')
-            
-            resp = make_response(redirect('/'))
-            resp.set_cookie(JWT_COOKIE, token, httponly=True)
-            return resp
-        else:
-            log_failed_login(app_user)
-            flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
-            return redirect(url_for('login'))
+        .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
+        .badge-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    </style>
+</head>
+<body>
 
-    # GET Request: check if connection is active or config is ready
-    return render_template_string(LOGIN_CONTENT)
-
-@app.route('/logout')
-def logout():
-    # Wis ook de globale DB status
-    global mongo_client, db, db_host_str
-    mongo_client, db, db_host_str = None, None, "Nog niet verbonden"
-    
-    resp = make_response(redirect('/login'))
-    resp.set_cookie(JWT_COOKIE, '', expires=0)
-    return resp
-
-
-# ------------------------------------------------------------------------------
-# 5. DASHBOARD & CRUD ROUTES (Rely on global 'db' being set by successful login)
-# ------------------------------------------------------------------------------
-@app.route('/')
-@token_required
-def dashboard():
-    # ... (Alle dashboard logica uit de vorige versie) ...
-    # 1. DB Stats
-    try:
-        stats = db.command("dbstats")
-        storage_mb = round(stats['storageSize'] / (1024 * 1024), 2)
-        storage_str = f"{storage_mb} MB"
-        db_status = True
-    except:
-        storage_str = "Unknown"
-        db_status = False
-
-    # 2. Failed Logins
-    yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-    failed_count = db['failed_logins'].count_documents({"timestamp": {"$gt": yesterday}})
-
-    # 3. Chart Data
-    pipeline = [
-        {"$match": {"timestamp": {"$gt": datetime.datetime.utcnow() - datetime.timedelta(days=7)}}},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
-            "count": {"$sum": 1}
-        }},
-        {"$sort": {"_id": 1}}
-    ]
-    chart_raw = list(db['access_logs'].aggregate(pipeline))
-    
-    chart_labels = []
-    chart_data = []
-    for i in range(6, -1, -1):
-        d = (datetime.datetime.utcnow() - datetime.timedelta(days=i)).strftime('%Y-%m-%d')
-        chart_labels.append(d)
-        val = next((item['count'] for item in chart_raw if item['_id'] == d), 0)
-        chart_data.append(val)
-
-    total_eps = db['system_endpoints'].count_documents({})
-
-    return render_template_string(DASHBOARD_CONTENT, 
-                                  active_page='dashboard',
-                                  db_host=db_host_str,
-                                  db_status=db_status,
-                                  db_storage=storage_str,
-                                  failed_logins=failed_count,
-                                  total_endpoints=total_eps,
-                                  chart_labels=json.dumps(chart_labels),
-                                  chart_data=json.dumps(chart_data))
-
-@app.route('/endpoints')
-@token_required
-def view_endpoints():
-    all_metas = list(db['system_endpoints'].find().sort("app_name", 1))
-    for ep in all_metas:
-        col = get_col_name(ep['app_name'], ep['endpoint_name'])
-        ep['doc_count'] = db[col].count_documents({})
-    return render_template_string(DASHBOARD_CONTENT, active_page='endpoints', endpoints=all_metas)
-
-@app.route('/users')
-@token_required
-def view_users():
-    users = list(db['users'].find())
-    return render_template_string(DASHBOARD_CONTENT, active_page='users', users=users)
-
-@app.route('/migrate')
-@token_required
-def migration_page():
-    all_cols = db.list_collection_names()
-    known_endpoints = list(db['system_endpoints'].find())
-    known_cols = [get_col_name(x['app_name'], x['endpoint_name']) for x in known_endpoints]
-    known_cols.extend(['system_endpoints', 'users', 'access_logs', 'failed_logins'])
-    
-    orphans = [c for c in all_cols if c not in known_cols]
-    counts = {c: db[c].count_documents({}) for c in orphans}
-    
-    return render_template_string(MIGRATION_HTML, orphans=orphans, counts=counts)
-
-@app.route('/migrate/do', methods=['POST'])
-@token_required
-def do_migration():
-    old_name = request.form.get('old_name')
-    new_app = request.form.get('new_app')
-    new_ep = request.form.get('new_ep')
-    
-    if db['system_endpoints'].find_one({"app_name": new_app, "endpoint_name": new_ep}):
-        flash("Doel bestaat al", "error")
-        return redirect('/migrate')
+    <nav class="sidebar">
+        <div class="logo"><i class="fas fa-network-wired"></i> API Gateway V2</div>
         
-    new_col = get_col_name(new_app, new_ep)
-    db[old_name].rename(new_col)
-    db['system_endpoints'].insert_one({
-        "app_name": new_app, "endpoint_name": new_ep,
-        "description": f"Migrated from {old_name}", "created_at": datetime.datetime.utcnow()
-    })
-    flash("Migratie gelukt", "success")
-    return redirect('/migrate')
+        <div class="section-title">Menu</div>
+        <a href="/" class="nav-item {{ 'active' if active_page == 'dashboard' else '' }}">
+            <i class="fas fa-chart-line"></i> Dashboard
+        </a>
+        <a href="/endpoints" class="nav-item {{ 'active' if active_page == 'endpoints' else '' }}">
+            <i class="fas fa-database"></i> Endpoints
+        </a>
+        
+        <div class="section-title">Beheer</div>
+        <a href="/users" class="nav-item {{ 'active' if active_page == 'users' else '' }}">
+            <i class="fas fa-users"></i> Gebruikers
+        </a>
+        <a href="/migrate" class="nav-item {{ 'active' if active_page == 'migrate' else '' }}">
+            <i class="fas fa-magic"></i> Migratie
+        </a>
+        
+        <a href="/logout" class="nav-item" style="margin-top: auto; color: #ef4444;">
+            <i class="fas fa-sign-out-alt"></i> Uitloggen
+        </a>
+    </nav>
 
+    <main class="main">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for c, m in messages %}
+              <div style="padding:1rem; margin-bottom:1rem; border-radius:0.5rem; background: {{ '#166534' if c=='success' else '#7f1d1d' }}; color:white;">
+                  {{ m }}
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
 
-@app.route('/users/add', methods=['POST'])
-@token_required
-def add_user():
-    u = request.form.get('username')
-    p = request.form.get('password')
-    val = int(request.form.get('validity', 24))
-    if db['users'].find_one({'username': u}):
-        flash("Gebruiker bestaat al", "error")
-    else:
-        db['users'].insert_one({
-            "username": u, "password_hash": hash_pass(p),
-            "token_validity_hours": val, "created_at": datetime.datetime.utcnow()
-        })
-        flash(f"Gebruiker {u} aangemaakt", "success")
-    return redirect('/users')
+        {% if active_page == 'dashboard' %}
+        <div class="header">
+            <h1>Systeem Status</h1>
+            <span class="badge badge-blue">Host: {{ db_host }}</span>
+        </div>
 
-@app.route('/users/delete', methods=['POST'])
-@token_required
-def delete_user():
-    uid = request.form.get('user_id')
-    db['users'].delete_one({"_id": ObjectId(uid)})
-    flash("Gebruiker verwijderd", "success")
-    return redirect('/users')
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Database Status <div class="status-dot {{ 'status-online' if db_status else 'status-offline' }}"></div></div>
+                <div class="stat-value">{{ 'Verbonden' if db_status else 'Fout' }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Totale Opslag <i class="fas fa-hdd"></i></div>
+                <div class="stat-value">{{ db_storage }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Mislukte Logins (24u) <i class="fas fa-shield-alt"></i></div>
+                <div class="stat-value" style="color: #ef4444;">{{ failed_logins }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Totaal Endpoints <i class="fas fa-layer-group"></i></div>
+                <div class="stat-value">{{ total_endpoints }}</div>
+            </div>
+        </div>
 
-@app.route('/manage/add', methods=['POST'])
-@token_required
-def add_endpoint():
-    app_n = request.form.get('app_name')
-    ep_n = request.form.get('endpoint_name')
-    if db['system_endpoints'].find_one({"app_name": app_n, "endpoint_name": ep_n}):
-        flash("Endpoint bestaat al", "error")
-    else:
-        db['system_endpoints'].insert_one({
-            "app_name": app_n, "endpoint_name": ep_n, "created_at": datetime.datetime.utcnow()
-        })
-        flash("Endpoint aangemaakt", "success")
-    return redirect('/endpoints')
+        <div class="card-panel">
+            <div class="panel-header">
+                <span class="panel-title">Activiteit (Afgelopen 7 dagen)</span>
+            </div>
+            <div style="padding: 1rem; height: 300px;">
+                <canvas id="activityChart"></canvas>
+            </div>
+        </div>
 
-@app.route('/manage/delete', methods=['POST'])
-@token_required
-def delete_endpoint():
-    app_n = request.form.get('app_name')
-    ep_n = request.form.get('endpoint_name')
-    col = get_col_name(app_n, ep_n)
-    db[col].drop()
-    db['system_endpoints'].delete_one({"app_name": app_n, "endpoint_name": ep_n})
-    flash("Verwijderd", "success")
-    return redirect('/endpoints')
+        <script>
+            const ctx = document.getElementById('activityChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: {{ chart_labels | safe }},
+                    datasets: [{
+                        label: 'Requests',
+                        data: {{ chart_data | safe }},
+                        backgroundColor: '#3b82f6',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                        x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        </script>
 
-@app.route('/manage/empty', methods=['POST'])
-@token_required
-def empty_endpoint():
-    app_n = request.form.get('app_name')
-    ep_n = request.form.get('endpoint_name')
-    db[get_col_name(app_n, ep_n)].delete_many({})
-    flash("Geleegd", "success")
-    return redirect('/endpoints')
+        {% elif active_page == 'users' %}
+        <div class="header">
+            <h1>Gebruikersbeheer</h1>
+            <button class="btn btn-primary" onclick="openModal('addUserModal')"><i class="fas fa-plus"></i> Nieuwe Gebruiker</button>
+        </div>
 
-@app.route('/manage/export/<app_name>/<endpoint_name>')
-@token_required
-def export_data(app_name, endpoint_name):
-    import io
-    from flask import send_file
-    col = get_col_name(app_name, endpoint_name)
-    data = list(db[col].find())
-    return send_file(io.BytesIO(json_util.dumps(data, indent=2).encode()), mimetype='application/json', as_attachment=True, download_name=f"{app_name}_{endpoint_name}.json")
+        <div class="card-panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Gebruikersnaam</th>
+                        <th>Token Geldigheid</th>
+                        <th>Aangemaakt op</th>
+                        <th>Acties</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td style="font-weight: 500; color: white;"><i class="fas fa-user-circle"></i> {{ user.username }}</td>
+                        <td>
+                            <span class="badge badge-blue">
+                                {{ user.token_validity_hours }} uur 
+                                ({% if user.token_validity_hours == 24 %}1 dag{% elif user.token_validity_hours == 168 %}7 dagen{% elif user.token_validity_hours == 8760 %}1 jaar{% else %}Custom{% endif %})
+                            </span>
+                        </td>
+                        <td>{{ user.created_at.strftime('%d-%m-%Y') if user.created_at else '-' }}</td>
+                        <td>
+                            {% if user.username != 'admin' %}
+                            <form action="/users/delete" method="POST" onsubmit="return confirm('Gebruiker verwijderen?');">
+                                <input type="hidden" name="user_id" value="{{ user._id }}">
+                                <button class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
+                            </form>
+                            {% else %}
+                            <small class="text-muted">Systeem Admin</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
 
-@app.route('/manage/import/<app_name>/<endpoint_name>', methods=['POST'])
-@token_required
-def import_data(app_name, endpoint_name):
-    f = request.files['file']
-    try:
-        data = json_util.loads(f.read())
-        if isinstance(data, list):
-            clean = [{k:v for k,v in d.items() if k!='_id'} for d in data]
-            if clean: db[get_col_name(app_name, endpoint_name)].insert_many(clean)
-            flash(f"{len(clean)} items geïmporteerd", "success")
-    except Exception as e: flash(f"Fout: {e}", "error")
-    return redirect('/endpoints')
+        <div id="addUserModal" class="modal">
+            <div class="modal-content">
+                <div style="display:flex; justify-content:space-between; margin-bottom:1.5rem;">
+                    <h3>Nieuwe Gebruiker</h3>
+                    <span onclick="closeModal('addUserModal')" style="cursor:pointer; font-size:1.5rem;">&times;</span>
+                </div>
+                <form action="/users/add" method="POST">
+                    <div class="form-group">
+                        <label class="form-label">Gebruikersnaam</label>
+                        <input type="text" name="username" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Wachtwoord</label>
+                        <input type="password" name="password" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Token Geldigheid</label>
+                        <select name="validity" class="form-select">
+                            <option value="24">24 Uur (Standaard)</option>
+                            <option value="168">7 Dagen</option>
+                            <option value="8760">1 Jaar</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width:100%">Aanmaken</button>
+                </form>
+            </div>
+        </div>
 
-# ------------------------------------------------------------------------------
-# 6. PUBLIEKE API
-# ------------------------------------------------------------------------------
-@app.route('/api/<app_name>/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
-def api_handler(app_name, endpoint_name):
-    # API endpoints vereisen een actieve DB verbinding, maar geen dashboard login.
-    if not db: return jsonify({"error": "DB Offline"}), 503
-    log_activity(f"{app_name}/{endpoint_name}")
-    
-    meta = db['system_endpoints'].find_one({"app_name": app_name, "endpoint_name": endpoint_name})
-    if not meta: return jsonify({"error": "Not Found"}), 404
-    
-    col = db[get_col_name(app_name, endpoint_name)]
-    
-    if request.method == 'GET':
-        return jsonify([{'id':str(d.pop('_id')), **d} for d in col.find()])
-    elif request.method == 'POST':
-        d = request.json or {}
-        if "created_at" not in d: d["created_at"] = datetime.datetime.utcnow()
-        res = col.insert_one(d)
-        return jsonify({"id": str(res.inserted_id)}), 201
-    elif request.method == 'DELETE':
-        col.delete_many({})
-        return jsonify({"status": "cleared"})
+        {% elif active_page == 'endpoints' %}
+        <div class="header">
+            <h1>Endpoints Data</h1>
+            <button class="btn btn-primary" onclick="openModal('addEndpointModal')"><i class="fas fa-plus"></i> Nieuw</button>
+        </div>
+        
+        <div class="stats-grid">
+             {% for ep in endpoints %}
+            <div class="stat-card">
+                <div class="stat-label" style="margin-bottom: 0.5rem;">
+                    <span>{{ ep.app_name }}</span>
+                    <i class="fas fa-database" style="color: var(--primary);"></i>
+                </div>
+                <h3 style="color: white; margin-bottom: 0.25rem;">/{{ ep.endpoint_name }}</h3>
+                <small style="color: var(--text-muted);">{{ ep.doc_count }} documenten</small>
+                
+                <div style="display: flex; gap: 5px; margin-top: 1rem;">
+                    <a href="/manage/export/{{ ep.app_name }}/{{ ep.endpoint_name }}" class="btn btn-sm btn-ghost" title="Backup"><i class="fas fa-download"></i></a>
+                    
+                    <button class="btn btn-sm btn-ghost" onclick="openImportModal('{{ ep.app_name }}', '{{ ep.endpoint_name }}')" title="Import"><i class="fas fa-upload"></i></button>
+                    
+                    <form action="/manage/empty" method="POST" onsubmit="return confirm('Weet je zeker dat je dit endpoint LEEG wilt maken? Alle data verdwijnt.');" style="display:inline;">
+                        <input type="hidden" name="app_name" value="{{ ep.app_name }}">
+                        <input type="hidden" name="endpoint_name" value="{{ ep.endpoint_name }}">
+                        <button class="btn btn-sm btn-ghost" style="color:orange;" title="Leegmaken (Truncate)"><i class="fas fa-eraser"></i></button>
+                    </form>
 
+                    <form action="/manage/delete" method="POST" onsubmit="return confirm('Verwijder endpoint definitief?');" style="display:inline;">
+                        <input type="hidden" name="app_name" value="{{ ep.app_name }}">
+                        <input type="hidden" name="endpoint_name" value="{{ ep.endpoint_name }}">
+                        <button class="btn btn-sm btn-ghost" style="color: #ef4444;" title="Verwijderen"><i class="fas fa-trash"></i></button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div id="addEndpointModal" class="modal">
+            <div class="modal-content">
+                <h3>Nieuw Endpoint</h3><br>
+                <form action="/manage/add" method="POST">
+                    <input type="text" name="app_name" class="form-input" placeholder="App Naam" style="margin-bottom:10px;" required>
+                    <input type="text" name="endpoint_name" class="form-input" placeholder="Endpoint Naam" style="margin-bottom:10px;" required>
+                    <button class="btn btn-primary" style="width:100%">Opslaan</button>
+                </form>
+                <br><button class="btn btn-ghost" style="width:100%" onclick="closeModal('addEndpointModal')">Annuleren</button>
+            </div>
+        </div>
+        
+        <div id="importModal" class="modal">
+            <div class="modal-content">
+                <h3>Importeer JSON</h3><br>
+                <form id="importForm" action="" method="POST" enctype="multipart/form-data">
+                    <input type="file" name="file" class="form-input" style="margin-bottom:10px;" required>
+                    <button class="btn btn-primary" style="width:100%">Uploaden</button>
+                </form>
+                <br><button class="btn btn-ghost" style="width:100%" onclick="closeModal('importModal')">Annuleren</button>
+            </div>
+        </div>
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+        {% endif %}
+    </main>
+
+    <script>
+        function openModal(id) { document.getElementById(id).classList.add('active'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+        function openImportModal(app, ep) {
+            document.getElementById('importForm').action = `/manage/import/${app}/${ep}`;
+            openModal('importModal');
+        }
+    </script>
+</body>
+</html>
+"""
