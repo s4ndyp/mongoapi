@@ -3,6 +3,7 @@ import datetime
 import json
 import secrets
 import time
+import urllib.parse
 from functools import wraps
 from flask import Flask, request, jsonify, render_template_string, redirect, url_for, flash, make_response
 from flask_cors import CORS
@@ -28,29 +29,48 @@ CONFIG_FILE = 'config.json'
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
-def save_config(host, port):
+def save_config(host, port, user, password):
+    data = {
+        "mongo_host": host, 
+        "mongo_port": int(port),
+        "mongo_user": user,
+        "mongo_pass": password
+    }
     with open(CONFIG_FILE, 'w') as f:
-        json.dump({"mongo_host": host, "mongo_port": int(port)}, f)
+        json.dump(data, f)
 
 def get_db_connection():
     conf = load_config()
-    # Als geen config, gebruik default of return None om setup te triggeren
     host = conf.get('mongo_host', 'localhost')
     port = conf.get('mongo_port', 27017)
-    uri = f"mongodb://{host}:{port}/"
+    user = conf.get('mongo_user', '')
+    password = conf.get('mongo_pass', '')
+    
+    # Bouw URI met auth als user is ingevuld
+    if user and password:
+        # Veilige encoding voor speciale tekens in wachtwoord
+        safe_user = urllib.parse.quote_plus(user)
+        safe_pass = urllib.parse.quote_plus(password)
+        uri = f"mongodb://{safe_user}:{safe_pass}@{host}:{port}/?authSource=admin"
+    else:
+        uri = f"mongodb://{host}:{port}/"
     
     try:
         client = MongoClient(uri, serverSelectionTimeoutMS=2000)
         client.server_info() # Trigger check
         return client, client['api_gateway_v2'], host
-    except Exception:
+    except Exception as e:
+        print(f"DB Error: {e}")
         return None, None, None
 
-# Globale DB variabele (wordt bij elke request gecheckt/ververst indien nodig)
+# Globale DB variabele
 mongo_client, db, db_host_str = get_db_connection()
 
 # ------------------------------------------------------------------------------
@@ -58,17 +78,13 @@ mongo_client, db, db_host_str = get_db_connection()
 # ------------------------------------------------------------------------------
 @app.before_request
 def check_db_setup():
-    # Sla statische bestanden over en de setup route zelf
     if request.endpoint in ['static', 'setup_db']:
         return
     
     global mongo_client, db, db_host_str
-    
-    # Probeer verbinding te herstellen als die er niet is
     if not db:
         mongo_client, db, db_host_str = get_db_connection()
     
-    # Als nog steeds geen DB, forceer naar setup pagina
     if not db:
         return render_template_string(SETUP_CONTENT)
 
@@ -76,27 +92,35 @@ def check_db_setup():
 def setup_db():
     host = request.form.get('host')
     port = request.form.get('port')
+    user = request.form.get('mongo_user', '')
+    password = request.form.get('mongo_pass', '')
     
-    # Test verbinding
+    # Test verbinding VOORDAT we opslaan
     try:
-        uri = f"mongodb://{host}:{port}/"
-        client = MongoClient(uri, serverSelectionTimeoutMS=2000)
+        if user and password:
+            safe_user = urllib.parse.quote_plus(user)
+            safe_pass = urllib.parse.quote_plus(password)
+            uri = f"mongodb://{safe_user}:{safe_pass}@{host}:{port}/?authSource=admin"
+        else:
+            uri = f"mongodb://{host}:{port}/"
+            
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
         client.server_info()
         
         # Als gelukt, opslaan
-        save_config(host, port)
+        save_config(host, port, user, password)
         
         # Herlaad globaal
         global mongo_client, db, db_host_str
         mongo_client, db, db_host_str = get_db_connection()
         
         flash("Verbinding geslaagd!", "success")
-        # Maak direct admin aan indien nodig
         create_initial_user()
         return redirect(url_for('login'))
+        
     except Exception as e:
         flash(f"Kon niet verbinden: {e}", "error")
-        return redirect('/') # Trigger de before_request weer
+        return redirect('/') 
 
 # ------------------------------------------------------------------------------
 # 3. HELPERS & SECURITY
@@ -225,10 +249,36 @@ def view_users():
 
 @app.route('/migrate')
 @token_required
-def migration_view():
-    # Eenvoudige versie, hergebruik oude logica of redirect naar aparte template
-    # Voor nu, stuur terug naar de vorige template logica (hier ingekort)
-    return redirect(url_for('dashboard')) # Placeholder, voeg migratie HTML terug toe indien nodig
+def migration_page():
+    all_cols = db.list_collection_names()
+    known_endpoints = list(db['system_endpoints'].find())
+    known_cols = [get_col_name(x['app_name'], x['endpoint_name']) for x in known_endpoints]
+    known_cols.extend(['system_endpoints', 'users', 'access_logs', 'failed_logins'])
+    
+    orphans = [c for c in all_cols if c not in known_cols]
+    counts = {c: db[c].count_documents({}) for c in orphans}
+    
+    return render_template_string(MIGRATION_HTML, orphans=orphans, counts=counts)
+
+@app.route('/migrate/do', methods=['POST'])
+@token_required
+def do_migration():
+    old_name = request.form.get('old_name')
+    new_app = request.form.get('new_app')
+    new_ep = request.form.get('new_ep')
+    
+    if db['system_endpoints'].find_one({"app_name": new_app, "endpoint_name": new_ep}):
+        flash("Doel bestaat al", "error")
+        return redirect('/migrate')
+        
+    new_col = get_col_name(new_app, new_ep)
+    db[old_name].rename(new_col)
+    db['system_endpoints'].insert_one({
+        "app_name": new_app, "endpoint_name": new_ep,
+        "description": f"Migrated from {old_name}", "created_at": datetime.datetime.utcnow()
+    })
+    flash("Migratie gelukt", "success")
+    return redirect('/migrate')
 
 # ------------------------------------------------------------------------------
 # 5. ACTIES (POST routes)
@@ -330,13 +380,11 @@ def empty_endpoint():
     app_n = request.form.get('app_name')
     ep_n = request.form.get('endpoint_name')
     col = get_col_name(app_n, ep_n)
-    
-    # Alleen data weg, endpoint blijft
     db[col].delete_many({})
     flash(f"Data van /api/{app_n}/{ep_n} gewist (Truncated).", "success")
     return redirect('/endpoints')
 
-# --- IMPORT/EXPORT (Kort) ---
+# --- IMPORT/EXPORT ---
 @app.route('/manage/export/<app_name>/<endpoint_name>')
 @token_required
 def export_data(app_name, endpoint_name):
