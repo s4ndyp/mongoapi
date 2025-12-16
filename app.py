@@ -24,8 +24,11 @@ DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 MONGO_CLIENT = None
 app = Flask(__name__)
 
-# CORS aangepast om credentials (cookies) toe te staan vanuit de frontend
-CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000", "http://localhost:5000"]) 
+# FIX: CORS Aangepast
+# Om 'Failed to fetch' van externe clients op te lossen, staat de API nu alle origins toe (*).
+# Omdat de data API beveiligd is met x-api-key en x-client-id headers, is dit veilig.
+# supports_credentials=True is verwijderd omdat dit conflicteert met origins='*'
+CORS(app, origins="*") 
 
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
