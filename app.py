@@ -53,13 +53,14 @@ def get_db_connection():
     user = conf.get('mongo_user', '')
     password = conf.get('mongo_pass', '')
     
-    # Bouw URI met auth als user is ingevuld
+    # Bouw URI: Alleen auth gebruiken als gebruiker dat in setup heeft ingevuld
     if user and password:
-        # Veilige encoding voor speciale tekens in wachtwoord
+        # Veilige encoding
         safe_user = urllib.parse.quote_plus(user)
         safe_pass = urllib.parse.quote_plus(password)
         uri = f"mongodb://{safe_user}:{safe_pass}@{host}:{port}/?authSource=admin"
     else:
+        # Onbeveiligde verbinding (standaard voor intern netwerk)
         uri = f"mongodb://{host}:{port}/"
     
     try:
@@ -74,17 +75,20 @@ def get_db_connection():
 mongo_client, db, db_host_str = get_db_connection()
 
 # ------------------------------------------------------------------------------
-# 2. SETUP ROUTE (Indien geen DB)
+# 2. SETUP ROUTES (Infrastructure Setup)
 # ------------------------------------------------------------------------------
 @app.before_request
 def check_db_setup():
-    if request.endpoint in ['static', 'setup_db']:
+    if request.endpoint in ['static', 'setup_db', 'reset_setup']:
         return
     
     global mongo_client, db, db_host_str
+    
+    # Als er geen DB object is, probeer te herladen (misschien net opgeslagen)
     if not db:
         mongo_client, db, db_host_str = get_db_connection()
     
+    # Als NOG STEEDS geen DB, dan naar setup
     if not db:
         return render_template_string(SETUP_CONTENT)
 
@@ -92,11 +96,12 @@ def check_db_setup():
 def setup_db():
     host = request.form.get('host')
     port = request.form.get('port')
+    # Optioneel: DB User/Pass (alleen als de server dat eist)
     user = request.form.get('mongo_user', '')
     password = request.form.get('mongo_pass', '')
     
-    # Test verbinding VOORDAT we opslaan
     try:
+        # 1. Test verbinding
         if user and password:
             safe_user = urllib.parse.quote_plus(user)
             safe_pass = urllib.parse.quote_plus(password)
@@ -105,22 +110,33 @@ def setup_db():
             uri = f"mongodb://{host}:{port}/"
             
         client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-        client.server_info()
+        client.server_info() # Check connection
         
-        # Als gelukt, opslaan
+        # 2. Als gelukt, opslaan
         save_config(host, port, user, password)
         
-        # Herlaad globaal
+        # 3. Herlaad globaal
         global mongo_client, db, db_host_str
         mongo_client, db, db_host_str = get_db_connection()
         
-        flash("Verbinding geslaagd!", "success")
+        # 4. Zorg dat er een admin user bestaat in de database
         create_initial_user()
+        
+        flash("Server verbonden! Log nu in.", "success")
         return redirect(url_for('login'))
         
     except Exception as e:
-        flash(f"Kon niet verbinden: {e}", "error")
+        flash(f"Kon niet verbinden met server: {e}", "error")
         return redirect('/') 
+
+@app.route('/setup/reset')
+def reset_setup():
+    # Helper om config te wissen als je vastzit
+    if os.path.exists(CONFIG_FILE):
+        os.remove(CONFIG_FILE)
+    global db
+    db = None
+    return redirect('/')
 
 # ------------------------------------------------------------------------------
 # 3. HELPERS & SECURITY
@@ -137,16 +153,21 @@ def hash_pass(p): return hashpw(p.encode('utf-8'), gensalt()).decode('utf-8')
 def check_pass(p, h): return checkpw(p.encode('utf-8'), h.encode('utf-8'))
 
 def create_initial_user():
-    if db and db['users'].count_documents({}) == 0:
-        db['users'].insert_one({
-            "username": "admin",
-            "password_hash": hash_pass("admin123"),
-            "token_validity_hours": 24,
-            "created_at": datetime.datetime.utcnow()
-        })
+    # Maakt admin user aan in de APPLICATIE database (niet de mongo server user)
+    if db:
+        try:
+            if db['users'].count_documents({}) == 0:
+                db['users'].insert_one({
+                    "username": "admin",
+                    "password_hash": hash_pass("admin123"),
+                    "token_validity_hours": 24,
+                    "created_at": datetime.datetime.utcnow()
+                })
+                print("Default admin user created.")
+        except Exception as e:
+            print(f"Error creating initial user: {e}")
 
 def log_activity(endpoint="system"):
-    """Simpele logger voor de grafiek"""
     if db:
         db['access_logs'].insert_one({
             "endpoint": endpoint,
@@ -174,15 +195,49 @@ def token_required(f):
     return decorated
 
 # ------------------------------------------------------------------------------
-# 4. DASHBOARD ROUTES (Views)
+# 4. LOGIN & DASHBOARD ROUTES
 # ------------------------------------------------------------------------------
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    # Dit is nu het APPLICATIE inlogscherm (Usercheck in de database)
+    if request.method == 'POST':
+        if not db: return redirect('/') # Terug naar setup als verbinding weg is
+        
+        u = request.form.get('username')
+        p = request.form.get('password')
+        
+        # Zoek user in de collectie 'users'
+        user = db['users'].find_one({'username': u})
+        
+        if user and check_pass(p, user['password_hash']):
+            hours = user.get('token_validity_hours', 24)
+            exp_time = datetime.datetime.utcnow() + datetime.timedelta(hours=hours)
+            
+            token = jwt.encode({
+                'sub': str(user['_id']),
+                'exp': exp_time
+            }, JWT_SECRET, algorithm='HS256')
+            
+            resp = make_response(redirect('/'))
+            resp.set_cookie(JWT_COOKIE, token, httponly=True)
+            return resp
+        else:
+            log_failed_login(u)
+            flash("Ongeldige inloggegevens.", "error")
+            
+    return render_template_string(LOGIN_CONTENT)
+
+@app.route('/logout')
+def logout():
+    resp = make_response(redirect('/login'))
+    resp.set_cookie(JWT_COOKIE, '', expires=0)
+    return resp
+
 @app.route('/')
 @token_required
 def dashboard():
-    if not db: return redirect(url_for('setup_db')) # Safety fallback
+    if not db: return redirect('/') 
 
-    # -- LOGICA VOOR DASHBOARD HOME --
-    
     # 1. DB Stats
     try:
         stats = db.command("dbstats")
@@ -193,12 +248,11 @@ def dashboard():
         storage_str = "Unknown"
         db_status = False
 
-    # 2. Failed Logins (last 24h)
+    # 2. Failed Logins
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     failed_count = db['failed_logins'].count_documents({"timestamp": {"$gt": yesterday}})
 
-    # 3. Chart Data (Activity last 7 days)
-    # Aggregatie pijplijn om logjes te tellen per dag
+    # 3. Chart Data
     pipeline = [
         {"$match": {"timestamp": {"$gt": datetime.datetime.utcnow() - datetime.timedelta(days=7)}}},
         {"$group": {
@@ -209,7 +263,6 @@ def dashboard():
     ]
     chart_raw = list(db['access_logs'].aggregate(pipeline))
     
-    # Vul gaten in data
     chart_labels = []
     chart_data = []
     for i in range(6, -1, -1):
@@ -218,7 +271,6 @@ def dashboard():
         val = next((item['count'] for item in chart_raw if item['_id'] == d), 0)
         chart_data.append(val)
 
-    # 4. Total Endpoints
     total_eps = db['system_endpoints'].count_documents({})
 
     return render_template_string(DASHBOARD_CONTENT, 
@@ -238,7 +290,6 @@ def view_endpoints():
     for ep in all_metas:
         col = get_col_name(ep['app_name'], ep['endpoint_name'])
         ep['doc_count'] = db[col].count_documents({})
-    
     return render_template_string(DASHBOARD_CONTENT, active_page='endpoints', endpoints=all_metas)
 
 @app.route('/users')
@@ -281,60 +332,20 @@ def do_migration():
     return redirect('/migrate')
 
 # ------------------------------------------------------------------------------
-# 5. ACTIES (POST routes)
+# 5. ACTIES (CRUD)
 # ------------------------------------------------------------------------------
-
-# --- LOGIN ---
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        if not db: return setup_db() # Catch
-        
-        u = request.form.get('username')
-        p = request.form.get('password')
-        user = db['users'].find_one({'username': u})
-        
-        if user and check_pass(p, user['password_hash']):
-            # Geldigheid ophalen, standaard 24u
-            hours = user.get('token_validity_hours', 24)
-            exp_time = datetime.datetime.utcnow() + datetime.timedelta(hours=hours)
-            
-            token = jwt.encode({
-                'sub': str(user['_id']),
-                'exp': exp_time
-            }, JWT_SECRET, algorithm='HS256')
-            
-            resp = make_response(redirect('/'))
-            resp.set_cookie(JWT_COOKIE, token, httponly=True)
-            return resp
-        else:
-            log_failed_login(u)
-            flash("Ongeldig wachtwoord of gebruiker", "error")
-            
-    return render_template_string(LOGIN_CONTENT)
-
-@app.route('/logout')
-def logout():
-    resp = make_response(redirect('/login'))
-    resp.set_cookie(JWT_COOKIE, '', expires=0)
-    return resp
-
-# --- USER MANAGEMENT ---
 @app.route('/users/add', methods=['POST'])
 @token_required
 def add_user():
     u = request.form.get('username')
     p = request.form.get('password')
     val = int(request.form.get('validity', 24))
-    
     if db['users'].find_one({'username': u}):
         flash("Gebruiker bestaat al", "error")
     else:
         db['users'].insert_one({
-            "username": u,
-            "password_hash": hash_pass(p),
-            "token_validity_hours": val,
-            "created_at": datetime.datetime.utcnow()
+            "username": u, "password_hash": hash_pass(p),
+            "token_validity_hours": val, "created_at": datetime.datetime.utcnow()
         })
         flash(f"Gebruiker {u} aangemaakt", "success")
     return redirect('/users')
@@ -347,13 +358,11 @@ def delete_user():
     flash("Gebruiker verwijderd", "success")
     return redirect('/users')
 
-# --- ENDPOINT ACTIONS ---
 @app.route('/manage/add', methods=['POST'])
 @token_required
 def add_endpoint():
     app_n = request.form.get('app_name')
     ep_n = request.form.get('endpoint_name')
-    
     if db['system_endpoints'].find_one({"app_name": app_n, "endpoint_name": ep_n}):
         flash("Endpoint bestaat al", "error")
     else:
@@ -371,7 +380,7 @@ def delete_endpoint():
     col = get_col_name(app_n, ep_n)
     db[col].drop()
     db['system_endpoints'].delete_one({"app_name": app_n, "endpoint_name": ep_n})
-    flash("Endpoint en data verwijderd", "success")
+    flash("Verwijderd", "success")
     return redirect('/endpoints')
 
 @app.route('/manage/empty', methods=['POST'])
@@ -379,12 +388,10 @@ def delete_endpoint():
 def empty_endpoint():
     app_n = request.form.get('app_name')
     ep_n = request.form.get('endpoint_name')
-    col = get_col_name(app_n, ep_n)
-    db[col].delete_many({})
-    flash(f"Data van /api/{app_n}/{ep_n} gewist (Truncated).", "success")
+    db[get_col_name(app_n, ep_n)].delete_many({})
+    flash("Geleegd", "success")
     return redirect('/endpoints')
 
-# --- IMPORT/EXPORT ---
 @app.route('/manage/export/<app_name>/<endpoint_name>')
 @token_required
 def export_data(app_name, endpoint_name):
@@ -408,13 +415,12 @@ def import_data(app_name, endpoint_name):
     return redirect('/endpoints')
 
 # ------------------------------------------------------------------------------
-# 6. PUBLIEKE API (Logt activiteit voor grafiek)
+# 6. PUBLIEKE API
 # ------------------------------------------------------------------------------
 @app.route('/api/<app_name>/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
 def api_handler(app_name, endpoint_name):
     if not db: return jsonify({"error": "DB Offline"}), 503
-    
-    log_activity(f"{app_name}/{endpoint_name}") # Log voor grafiek
+    log_activity(f"{app_name}/{endpoint_name}")
     
     meta = db['system_endpoints'].find_one({"app_name": app_name, "endpoint_name": endpoint_name})
     if not meta: return jsonify({"error": "Not Found"}), 404
