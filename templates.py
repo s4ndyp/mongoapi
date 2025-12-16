@@ -10,6 +10,7 @@ SETUP_CONTENT = """
     <meta charset="UTF-8">
     <title>Setup - API Gateway</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { background: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; width: 100%; max-width: 450px; border: 1px solid #334155; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
@@ -86,7 +87,76 @@ LOGIN_CONTENT = """
 """
 
 # ------------------------------------------------------------------------------
-# 3. DASHBOARD (Full App)
+# 3. MIGRATIE PAGINA (Hier miste de variabele in de vorige versie)
+# ------------------------------------------------------------------------------
+MIGRATION_HTML = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Migratie Tool</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; padding: 2rem; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { margin-bottom: 2rem; border-bottom: 1px solid #334155; padding-bottom: 1rem; }
+        .card { background: #1e293b; padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 1rem; border: 1px solid #334155; display: flex; align-items: center; justify-content: space-between; }
+        .old-name { font-family: monospace; font-size: 1.1rem; color: #cbd5e1; }
+        .form-inline { display: flex; gap: 10px; align-items: center; }
+        input { background: #0f172a; border: 1px solid #475569; color: white; padding: 0.5rem; border-radius: 0.25rem; }
+        button { background: #2563eb; color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.25rem; cursor: pointer; }
+        button:hover { background: #1d4ed8; }
+        .badge { background: #ef4444; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; margin-right: 10px; }
+        .btn-back { display: inline-block; margin-bottom: 20px; color: #94a3b8; text-decoration: none; }
+        .btn-back:hover { color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="btn-back"><i class="fas fa-arrow-left"></i> Terug naar Dashboard</a>
+        <h1><i class="fas fa-magic"></i> Database Migratie</h1>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div style="background: #166534; color: #86efac; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <p style="color: #94a3b8; margin-bottom: 2rem;">
+            Hieronder staan database collecties die nog niet gekoppeld zijn aan de nieuwe structuur. 
+            Geef ze een Applicatie- en Endpointnaam om ze te importeren.
+        </p>
+
+        {% for col in orphans %}
+        <div class="card">
+            <div>
+                <span class="badge">Oud</span>
+                <span class="old-name">{{ col }}</span>
+                <div style="font-size: 0.8rem; color: #64748b; margin-top: 5px;">{{ counts[col] }} documenten</div>
+            </div>
+            <form class="form-inline" action="/migrate/do" method="POST">
+                <input type="hidden" name="old_name" value="{{ col }}">
+                <input type="text" name="new_app" placeholder="App Naam" required>
+                <input type="text" name="new_ep" placeholder="Endpoint" required>
+                <button type="submit">Migreer</button>
+            </form>
+        </div>
+        {% else %}
+            <div style="text-align: center; color: #64748b; padding: 3rem;">
+                <i class="fas fa-check-circle" style="font-size: 2rem; color: #22c55e;"></i><br><br>
+                Geen ongekoppelde collecties gevonden. Alles is up-to-date!
+            </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
+"""
+
+# ------------------------------------------------------------------------------
+# 4. DASHBOARD (Full App)
 # ------------------------------------------------------------------------------
 DASHBOARD_CONTENT = """
 <!DOCTYPE html>
