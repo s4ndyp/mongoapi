@@ -37,6 +37,14 @@
         .btn-danger:hover {
             background-color: #f85149; 
         }
+        .btn-warning {
+            background-color: #9a6700; /* Dark Yellow */
+            color: white;
+            transition: background-color 0.15s;
+        }
+        .btn-warning:hover {
+            background-color: #b0880f;
+        }
         input, textarea, select {
             background-color: #0d1117 !important;
             border-color: #30363d !important;
@@ -121,7 +129,7 @@
                 <div class="flex border-b border-[#30363d] space-x-4">
                     <button id="tab-api-keys" class="tab-btn active" data-tab="keys">API Sleutels & Beheer</button>
                     <button id="tab-api-test" class="tab-btn" data-tab="api-test">Sessie Test</button>
-                    <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Collecties</button>
+                    <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Collecties & Migratie</button>
                     <button id="tab-activity" class="tab-btn" data-tab="activity">Activiteit</button>
                 </div>
 
@@ -174,11 +182,11 @@
                         </div>
                     </div>
 
-                    <!-- 3. Oude Collecties/Endpoints (Collecties Tab) -->
+                    <!-- 3. Collecties & Migratie (Collecties Tab) -->
                     <div id="content-old-endpoints" class="hidden">
                         <div class="card p-6 mb-6">
                             <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Nieuwe Collectie Aanmaken (Endpoint POST)</h3>
-                            <p class="text-sm text-gray-400 mb-4">Om een nieuwe collectie aan te maken via de universele route, dient u een Client ID en de bijbehorende API Key te gebruiken (die u aanmaakt op het tabblad 'API Sleutels & Beheer').</p>
+                            <p class="text-sm text-gray-400 mb-4">Om een nieuwe collectie aan te maken via de universele route, dient u een Client ID en de bijbehorende API Key te gebruiken.</p>
 
                             <form id="create-endpoint-form" class="space-y-4">
                                 <div id="key-selection-container">
@@ -205,10 +213,22 @@
                         </div>
                         
                         <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-yellow-500">Overzicht Bestaande Collecties</h3>
-                            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4" id="old-endpoints-list">
-                                <!-- Collecties worden hier geladen door JS -->
-                            </div>
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-yellow-500">Overzicht Collectie Status & Migratie</h3>
+                            <div id="scan-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
+
+                            <table class="min-w-full divide-y divide-gray-700 table">
+                                <thead>
+                                    <tr>
+                                        <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider">Collectie Naam</th>
+                                        <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider">Totaal Docs</th>
+                                        <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider">Wees Docs (Mankende `client_id`)</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider">Actie</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="collection-scan-table" class="bg-[#161b22] divide-y divide-gray-800">
+                                    <tr><td colspan="4" class="p-4 text-center text-gray-500">Bezig met scannen...</td></tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 
@@ -260,6 +280,10 @@
         const initialDataTextarea = document.getElementById('initial-data');
         const postClientIdSelect = document.getElementById('post-client-id');
         const selectedClientKeyDiv = document.getElementById('selected-client-key');
+        
+        // Nieuwe elementen voor Scan/Conversie
+        const collectionScanTable = document.getElementById('collection-scan-table');
+        const scanMessage = document.getElementById('scan-message');
 
 
         let currentUserId = null;
@@ -297,6 +321,11 @@
                 // Activeer de geklikte knop en toon de content
                 button.classList.add('active');
                 document.getElementById(`content-${tab}`).classList.remove('hidden');
+
+                // Speciale actie voor scan
+                if (tab === 'old-endpoints') {
+                    loadCollectionScan();
+                }
             });
         });
 
@@ -356,7 +385,7 @@
             }
         });
         
-        // --- NIEUWE FUNCTIE: Endpoint Aanmaken ---
+        // --- Collectie Aanmaak en Selectie Logica ---
         postClientIdSelect.addEventListener('change', () => {
             const clientId = postClientIdSelect.value;
             const client = activeClientKeys.find(k => k.client_id === clientId);
@@ -400,10 +429,11 @@
                 return;
             }
 
-            // Nu voeren we de POST uit met de API Key headers
+            // POST uitvoeren met API Key headers
             const url = `${API_BASE_URL}/${endpointName}`;
             
             try {
+                // Let op: Hier gebruiken we de CLIENT API key, want we communiceren met de beveiligde data-endpoint
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: {
@@ -419,7 +449,8 @@
                 if (response.ok) {
                     showMessage(createEndpointMessage, `Endpoint /api/${endpointName} succesvol aangemaakt (ID: ${responseData.id}).`, false);
                     newEndpointNameInput.value = '';
-                    initialDataTextarea.value = JSON.stringify({ "created_by": "admin", "description": "Another placeholder document." }, null, 4);
+                    // Houd de data voor het gemak vast, maar maak de textarea schoon
+                    initialDataTextarea.value = JSON.stringify({ "created_by": "admin", "description": "Another placeholder document." }, null, 4); 
                     loadDashboard(); // Herlaad om nieuwe endpoint in de lijst te tonen
                 } else {
                     showMessage(createEndpointMessage, `Aanmaak mislukt (Status ${response.status}): ${responseData.error || 'Serverfout'}`, true);
@@ -429,7 +460,90 @@
             }
         });
 
+        // --- NIEUW: Scan en Conversie Logica ---
 
+        async function loadCollectionScan() {
+            hideMessage(scanMessage);
+            collectionScanTable.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">Bezig met scannen...</td></tr>';
+            
+            try {
+                const scanData = await safeFetch('/collections/scan');
+                renderCollectionScanTable(scanData);
+            } catch (error) {
+                showMessage(scanMessage, `Fout bij scannen: ${error.message}`, true);
+                collectionScanTable.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-red-500">Fout bij laden: ${error.message}</td></tr>`;
+            }
+        }
+        
+        function renderCollectionScanTable(collections) {
+            collectionScanTable.innerHTML = '';
+            
+            if (collections.length === 0) {
+                 collectionScanTable.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-500">Geen user-defined collecties gevonden.</td></tr>`;
+                 return;
+            }
+
+            collections.forEach(col => {
+                const row = document.createElement('tr');
+                const isOrphan = col.orphan_documents > 0;
+                
+                row.className = isOrphan ? 'hover:bg-[#2e1d1d] border-l-4 border-red-500' : 'hover:bg-[#1f242b]';
+                
+                const actionButton = isOrphan
+                    ? `<button class="btn-warning text-xs py-1 px-2 rounded" 
+                                onclick="showConversionModal('${col.name}', ${col.orphan_documents})">
+                            Adopteer (${col.orphan_documents})
+                        </button>`
+                    : `<span class="text-green-500 text-xs">OK</span>`;
+                
+                row.innerHTML = `
+                    <td class="px-3 py-2 text-sm font-medium text-gray-200">${col.name}</td>
+                    <td class="px-3 py-2 text-sm text-gray-400">${col.total_documents}</td>
+                    <td class="px-3 py-2 text-sm font-semibold ${isOrphan ? 'text-red-400' : 'text-gray-400'}">
+                        ${col.orphan_documents}
+                    </td>
+                    <td class="px-3 py-2 text-right">${actionButton}</td>
+                `;
+                collectionScanTable.appendChild(row);
+            });
+        }
+        
+        // --- Conversie Modal Simulatie ---
+        
+        window.showConversionModal = function(collectionName, count) {
+            const clientIdToAdopt = prompt(`Wilt u ${count} documenten in collectie '${collectionName}' converteren? \n\nVoer het CLIENT ID in waaraan deze data moet worden toegewezen (bijv. de ID van uw frontend app).`);
+
+            if (clientIdToAdopt) {
+                // Controleer of de ingevoerde ID bestaat
+                if (activeClientKeys.some(k => k.client_id === clientIdToAdopt)) {
+                     if (confirm(`Bevestig: Alle ${count} weesdocumenten in ${collectionName} toewijzen aan Client ID ${clientIdToAdopt}? Dit is onomkeerbaar!`)) {
+                        performConversion(collectionName, clientIdToAdopt);
+                     }
+                } else {
+                    alert('FOUT: Dit Client ID bestaat niet in uw lijst met actieve keys. Maak het eerst aan.');
+                }
+            } else if (clientIdToAdopt === "") {
+                alert('Actie geannuleerd.');
+            }
+        }
+
+        async function performConversion(collectionName, clientId) {
+             showMessage(scanMessage, `Conversie van ${collectionName} gestart...`, false);
+
+             try {
+                const response = await safeFetch('/collections/convert', {
+                    method: 'POST',
+                    body: JSON.stringify({ collection_name: collectionName, client_id: clientId })
+                });
+
+                showMessage(scanMessage, response.message, false);
+                loadDashboard(); // Herlaad alles inclusief de scan
+
+             } catch (error) {
+                showMessage(scanMessage, `Conversie mislukt: ${error.message}`, true);
+             }
+        }
+        
         // --- Authenticatie Handlers ---
 
         loginForm.addEventListener('submit', async (e) => {
@@ -476,7 +590,7 @@
 
                 toggleScreens(true);
 
-                // Keys opslaan voor gebruik in POST formulier
+                // Keys opslaan voor gebruik in POST formulier en conversie
                 activeClientKeys = settingsData.api_keys; 
 
                 // Dashboard Samenvatting
@@ -495,9 +609,13 @@
                 // Client ID Selector voor POST
                 populateClientKeySelector(settingsData.api_keys);
                 
-                // Oude Collecties
-                renderOldCollections(dashboardData.all_collections);
-
+                // Initialiseer de scan als het tabblad de actieve is
+                if (document.getElementById('content-old-endpoints').classList.contains('hidden')) {
+                    // Start de scan pas bij de klik op het tabblad
+                } else {
+                    loadCollectionScan();
+                }
+                
             } catch (error) {
                 console.error("Dashboard laadfout:", error);
                 if (!currentUserId) { 
@@ -519,29 +637,7 @@
             selectedClientKeyDiv.textContent = '';
             selectedClientKeyDiv.classList.add('hidden');
         }
-
-        function renderOldCollections(collections) {
-            oldEndpointsList.innerHTML = '';
-            if (collections.length === 0) {
-                oldEndpointsList.innerHTML = '<div class="col-span-full p-4 text-center text-gray-500">Geen oude collecties gevonden. Alles is universeel!</div>';
-                return;
-            }
-
-            collections.forEach(name => {
-                const item = document.createElement('div');
-                item.className = 'card p-4 flex flex-col justify-between items-start space-y-2';
-                item.innerHTML = `
-                    <p class="text-lg font-semibold text-gray-200">${name}</p>
-                    <p class="text-xs text-gray-400">Gebruik dit pad in de API Tester.</p>
-                    <button class="text-xs text-blue-400 hover:underline" 
-                            onclick="copyToClipboardText('${name}')">
-                        Kopieer Naam
-                    </button>
-                `;
-                oldEndpointsList.appendChild(item);
-            });
-        }
-
+        
         function renderActivity(activity) {
             activityList.innerHTML = '';
             if (activity.length === 0) {
