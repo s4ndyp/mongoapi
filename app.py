@@ -26,8 +26,6 @@ app = Flask(__name__)
 
 # FIX: CORS Aangepast
 # Om 'Failed to fetch' van externe clients op te lossen, staat de API nu alle origins toe (*).
-# Omdat de data API beveiligd is met x-api-key en x-client-id headers, is dit veilig.
-# supports_credentials=True is verwijderd omdat dit conflicteert met origins='*'
 CORS(app, origins="*") 
 
 app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
@@ -453,7 +451,7 @@ def api_logout():
     resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, samesite='Lax')
     return resp
 
-# --- NIEUW: Profiel wijzigen (Wachtwoord/Gebruikersnaam) ---
+# --- Profiel wijzigen (Wachtwoord/Gebruikersnaam) ---
 @app.route('/api/admin/profile', methods=['GET', 'POST'])
 @check_auth
 def api_admin_profile():
@@ -520,13 +518,19 @@ def api_admin_profile():
         return jsonify({'message': 'Profiel succesvol bijgewerkt.'})
 
 
-# --- NIEUW: Scan Endpoints op Weesdata ---
+# --- FIX: Scan Endpoints op Inaccessible Data ---
 @app.route('/api/collections/scan', methods=['GET'])
 @check_auth
 def api_collections_scan():
     db = get_db()
     if db is None: return jsonify({"error": "Database connection error"}), 503
 
+    g = globals()
+    user_id = g['user_id']
+    
+    # 1. Haal alle Client ID's van de huidige admin op
+    admin_client_ids = [client['_id'] for client in db.clients.find({'user_id': user_id, 'revoked': False})]
+    
     system_collections = ['users', 'clients', 'statistics', 'system.indexes']
     user_endpoints = [name for name in db.list_collection_names() if name not in system_collections]
     
@@ -536,13 +540,18 @@ def api_collections_scan():
         collection = db[name]
         try:
             total_count = collection.count_documents({})
-            # Zoek documenten die GEEN meta.client_id veld hebben
-            orphan_count = collection.count_documents({
+            
+            # 2. DEFINITIE VAN 'WEESDATA' (INACCESSIBLE DATA):
+            # Documenten die NIET aan de admin toebehoren.
+            orphan_filter = {
                 '$or': [
-                    {'meta.client_id': {'$exists': False}},
-                    {'meta.client_id': None}
+                    {'meta.client_id': {'$exists': False}},          # Mist meta veld
+                    {'meta.client_id': None},                         # meta veld is null
+                    {'meta.client_id': {'$nin': admin_client_ids}}  # client_id is niet in de lijst van admin's IDs
                 ]
-            })
+            }
+            
+            orphan_count = collection.count_documents(orphan_filter)
 
             collection_stats.append({
                 'name': name,
@@ -563,11 +572,14 @@ def api_collections_scan():
 @check_auth
 def api_collections_convert():
     """
-    Update alle weesdocumenten in een gespecificeerde collectie met de opgegeven Client ID.
+    Update alle weesdocumenten (ontoegankelijke data) in een gespecificeerde collectie met de opgegeven Client ID.
     """
     db = get_db()
     if db is None: return jsonify({"error": "Database connection error"}), 503
 
+    g = globals()
+    user_id = g['user_id']
+    
     data = request.get_json()
     collection_name = data.get('collection_name')
     client_id = data.get('client_id')
@@ -587,12 +599,15 @@ def api_collections_convert():
     
     collection = db[collection_name]
     
-    # 3. Voer de update uit
-    # Criteria: Documenten zonder meta.client_id of met meta.client_id = None
-    update_filter = {
+    # 3. Bepaal de 'Inaccessible Data' filter (Moet overeenkomen met de scan logica)
+    admin_client_ids = [c['_id'] for c in db.clients.find({'user_id': user_id, 'revoked': False})]
+    
+    inaccessible_filter = {
         '$or': [
             {'meta.client_id': {'$exists': False}},
-            {'meta.client_id': None}
+            {'meta.client_id': None},
+            # Target de oude 'sandman' data of andere Client IDs die niet aan de admin toebehoren
+            {'meta.client_id': {'$nin': admin_client_ids}} 
         ]
     }
     
@@ -606,7 +621,7 @@ def api_collections_convert():
     
     try:
         # update_many voert de conversie uit
-        result = collection.update_many(update_filter, update_operation)
+        result = collection.update_many(inaccessible_filter, update_operation)
 
         return jsonify({
             'message': f'{result.modified_count} documenten in collectie "{collection_name}" zijn geconverteerd en toegewezen aan Client ID "{client_id}".',
@@ -650,7 +665,7 @@ def api_dashboard():
     serialized_endpoint_stats = format_mongo_doc(endpoint_stats)
     serialized_recent_activity = format_mongo_doc(recent_activity)
     
-    # NIEUW: Haal de lijst van clients op voor de frontend selector (de keys zijn hier niet nodig)
+    # Haal de lijst van clients op voor de frontend selector (de keys zijn hier niet nodig)
     clients = list(db.clients.find({'user_id': user_id, 'revoked': False}, {'_id': 1, 'description': 1}))
     
     serialized_clients = format_mongo_doc(clients)
@@ -665,7 +680,7 @@ def api_dashboard():
         'top_endpoints': serialized_endpoint_stats,
         'recent_activity': serialized_recent_activity,
         'all_collections': user_endpoints,
-        'available_clients_meta': serialized_clients # Alleen ID en beschrijving
+        'available_clients_meta': serialized_clients
     })
 
 
