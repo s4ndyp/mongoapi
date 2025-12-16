@@ -21,4 +21,4 @@ EXPOSE 5000
 ENV FLASK_APP=app.py
 
 # Start de applicatie wanneer de container start
-CMD ["python", "app.py"]
+CMD ["python", "app.py reset-pass"]
