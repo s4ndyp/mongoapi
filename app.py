@@ -143,19 +143,21 @@ def check_client_id_for_limit():
 def log_statistic(action, client_id, endpoint_name):
     # Log een API aanvraag
     db = get_db()
-    try:
-        db.statistics.insert_one({
-            'timestamp': datetime.datetime.utcnow(),
-            'client_id': client_id,
-            'endpoint': endpoint_name,
-            'action': action,
-            'ip_address': get_remote_address()
-        })
-    except Exception as e:
-        print(f"Log error: {e}")
+    if db is not None: # FIX: Controleren op None
+        try:
+            db.statistics.insert_one({
+                'timestamp': datetime.datetime.utcnow(),
+                'client_id': client_id,
+                'endpoint': endpoint_name,
+                'action': action,
+                'ip_address': get_remote_address()
+            })
+        except Exception as e:
+            print(f"Log error: {e}")
 
 def create_initial_admin(db):
     # Initialiseer de admin gebruiker als deze nog niet bestaat
+    # FIX: PyMongo cursor.count() is verouderd. Gebruik count_documents.
     if db.users.count_documents({}) == 0:
         admin_pass = secrets.token_urlsafe(16)
         db.users.insert_one({
@@ -366,7 +368,7 @@ def data_endpoint(endpoint_path):
 @app.route('/api/login', methods=['POST'])
 def api_login():
     db = get_db()
-    if db:
+    if db is not None: # FIX: Controleren op None
         create_initial_admin(db) 
 
     data = request.get_json()
@@ -496,7 +498,7 @@ def api_settings():
 if __name__ == '__main__':
     # Initialisatie van de DB en admin
     db = get_db()
-    if db:
+    if db is not None: # FIX: Controleren op None
         create_initial_admin(db)
         
     # Start de Flask app
