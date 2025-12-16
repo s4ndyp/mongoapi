@@ -1,7 +1,7 @@
 # templates.py
 
 # ------------------------------------------------------------------------------
-# 1. SETUP PAGINA (Voor DB Connectie)
+# 1. SETUP PAGINA (Nu met DB User/Pass)
 # ------------------------------------------------------------------------------
 SETUP_CONTENT = """
 <!DOCTYPE html>
@@ -10,24 +10,24 @@ SETUP_CONTENT = """
     <meta charset="UTF-8">
     <title>Setup - API Gateway</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { background: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; width: 100%; max-width: 450px; border: 1px solid #334155; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
         h2 { margin-top: 0; color: #fff; text-align: center; }
         p { color: #94a3b8; text-align: center; margin-bottom: 2rem; font-size: 0.9rem; }
         label { display: block; margin-bottom: 0.5rem; font-size: 0.9rem; color: #cbd5e1; }
-        input { width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 0.5rem; box-sizing: border-box; margin-bottom: 1.5rem; }
+        input { width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 0.5rem; box-sizing: border-box; margin-bottom: 1rem; }
         input:focus { outline: none; border-color: #3b82f6; }
-        button { width: 100%; padding: 0.75rem; background: #2563eb; color: white; border: none; border-radius: 0.5rem; font-weight: 600; cursor: pointer; }
+        button { width: 100%; padding: 0.75rem; background: #2563eb; color: white; border: none; border-radius: 0.5rem; font-weight: 600; cursor: pointer; margin-top: 1rem; }
         button:hover { background: #1d4ed8; }
         .alert { background: #7f1d1d; color: #fca5a5; padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 1.5rem; font-size: 0.9rem; text-align: center; border: 1px solid #ef4444; }
+        .section-header { font-size: 0.8rem; text-transform: uppercase; color: #64748b; margin-top: 1rem; margin-bottom: 0.5rem; font-weight: bold; border-bottom: 1px solid #334155; padding-bottom: 5px; }
     </style>
 </head>
 <body>
     <div class="card">
         <h2><i class="fas fa-plug"></i> Database Setup</h2>
-        <p>Er kon geen verbinding worden gemaakt met MongoDB.<br>Voer de verbindingsgegevens in.</p>
+        <p>Verbind de applicatie met jouw MongoDB server.<br>Deze gegevens worden lokaal opgeslagen.</p>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
@@ -38,11 +38,19 @@ SETUP_CONTENT = """
         {% endwith %}
 
         <form method="POST">
-            <label>MongoDB Host (bv. localhost of IP)</label>
+            <div class="section-header">Locatie</div>
+            <label>Host (bv. localhost of IP)</label>
             <input type="text" name="host" value="localhost" required>
             
             <label>Poort (Standaard: 27017)</label>
             <input type="number" name="port" value="27017" required>
+
+            <div class="section-header">Authenticatie (Optioneel)</div>
+            <label>MongoDB Username</label>
+            <input type="text" name="mongo_user" placeholder="Laat leeg indien geen auth">
+            
+            <label>MongoDB Password</label>
+            <input type="password" name="mongo_pass" placeholder="Laat leeg indien geen auth">
             
             <button type="submit">Verbinden & Opslaan</button>
         </form>
@@ -87,7 +95,7 @@ LOGIN_CONTENT = """
 """
 
 # ------------------------------------------------------------------------------
-# 3. MIGRATIE PAGINA (Hier miste de variabele in de vorige versie)
+# 3. MIGRATIE PAGINA
 # ------------------------------------------------------------------------------
 MIGRATION_HTML = """
 <!DOCTYPE html>
