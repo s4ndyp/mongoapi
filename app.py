@@ -1,964 +1,639 @@
-# app.py
 import os
-import datetime
 import json
-import secrets
-import string
-import re
-from functools import wraps
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session, make_response
-from flask_cors import CORS 
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, send_file, flash
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from bson import ObjectId
+from bson import ObjectId, json_util
+from datetime import datetime
+import io
 
-# IMPORTS voor JWT en hashing
-import jwt 
-from bcrypt import hashpw, gensalt, checkpw
-import hashlib 
-
-# IMPORT Templates
-from templates import (
-    LOGIN_CONTENT, BASE_LAYOUT, DASHBOARD_CONTENT, 
-    ENDPOINTS_CONTENT, CLIENT_DETAIL_CONTENT, SETTINGS_CONTENT
-)
-
-# --- Globale Configuratie ---
-DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
-MONGO_CLIENT = None
 app = Flask(__name__)
+app.secret_key = 'supersecretkey_change_this'  # Nodig voor flash messages
 
-# CORS aangepast
-CORS(app, supports_credentials=True) 
+# ------------------------------------------------------------------------------
+# CONFIGURATIE & DATABASE VERBINDING
+# ------------------------------------------------------------------------------
+# Pas deze URI aan naar jouw MongoDB server
+MONGO_URI = 'mongodb://localhost:27017/'
+client = MongoClient(MONGO_URI)
+db = client['api_gateway_v2']  # Nieuwe database naam voor V2 structuur
 
-app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
-app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
+# Collectie voor de configuratie van endpoints (metadata)
+# Document structuur: { "app_name":Str, "endpoint_name":Str, "description":Str, "created_at": Date }
+endpoints_meta = db['system_endpoints']
 
-# CONFIGURATIE VOOR JWT
-app.config['JWT_SECRET'] = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
-app.config['JWT_EXPIRY_MINUTES'] = 60 * 24 
-app.config['JWT_COOKIE_NAME'] = 'auth_token' 
+# ------------------------------------------------------------------------------
+# HULPFUNCTIES
+# ------------------------------------------------------------------------------
 
-# --- Helper: Wachtwoord Hashing ---
-def hash_password(password):
-    return hashpw(password.encode('utf-8'), gensalt()).decode('utf-8')
+def get_data_collection_name(app_name, endpoint_name):
+    """Genereert de collectienaam voor de data opslag: data_<app>_<endpoint>"""
+    # Zorg dat namen veilig zijn voor mongodb collecties (geen vreemde tekens)
+    safe_app = "".join(x for x in app_name if x.isalnum() or x in "_-")
+    safe_end = "".join(x for x in endpoint_name if x.isalnum() or x in "_-")
+    return f"data_{safe_app}_{safe_end}"
 
-def check_password(password, hashed):
-    return checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
-# --- Helper: JWT Functies ---
-def encode_auth_token(user_id, expiry_minutes=None):
-    try:
-        minutes = expiry_minutes if expiry_minutes is not None else app.config['JWT_EXPIRY_MINUTES']
-        payload = {
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes),
-            'iat': datetime.datetime.utcnow(),
-            'sub': str(user_id)
-        }
-        return jwt.encode(payload, app.config.get('JWT_SECRET'), algorithm='HS256')
-    except Exception as e:
-        print(f"JWT Encoding Error: {e}")
+def serialize_doc(doc):
+    """Zet MongoDB document om naar JSON-serializable formaat"""
+    if not doc:
         return None
+    doc['id'] = str(doc['_id'])
+    del doc['_id']
+    return doc
 
-def decode_auth_token(auth_token):
-    try:
-        payload = jwt.decode(auth_token, app.config.get('JWT_SECRET'), algorithms=['HS256'])
-        return (True, payload['sub'])
-    except jwt.ExpiredSignatureError:
-        return (False, 'Token is verlopen.')
-    except jwt.InvalidTokenError:
-        return (False, 'Ongeldig token.')
-
-# --- Helper: Opslag Formatteren ---
-def format_size(size_bytes):
-    if size_bytes == 0: return "0 KB"
-    size_name = ("B", "KB", "MB", "GB", "TB")
-    i = int(0)
-    p = 1024
-    while size_bytes >= p and i < len(size_name) - 1:
-        size_bytes /= p
-        i += 1
-    return f"{size_bytes:.2f} {size_name[i]}"
-
-
-# --- Database Connectie & Indexen ---
-def ensure_indexes(db):
-    try:
-        db['statistics'].create_index([("timestamp", 1), ("source", 1)], background=True)
-        db['statistics'].create_index("timestamp", expireAfterSeconds=31536000, background=True) 
-        db['api_keys'].create_index("key", unique=True, background=True)
-        db['api_keys'].create_index("client_id", unique=True, background=True)
-        db['endpoints'].create_index("name", unique=True, background=True)
-        db['users'].create_index("username", unique=True, background=True)
-        db['tag_settings'].create_index("tag", unique=True, background=True)
-        
-        # Data indexen
-        db['data_items'].create_index([("projectId", 1), ("type", 1)], background=True)
-        db['data_projects'].create_index([("name", 1)], background=True)
-        db['data_items'].create_index("meta.client_id", background=True)
-        db['data_projects'].create_index("meta.client_id", background=True)
-        print("MongoDB Indexen gecontroleerd.")
-    except Exception as e:
-        print(f"Waarschuwing indexen: {e}")
-
-def get_db_connection(uri=None):
-    global MONGO_CLIENT
-    target_uri = uri if uri else app.config.get('MONGO_URI')
-
-    if not target_uri: return None, "URI missing"
-
-    if MONGO_CLIENT is None or uri is not None:
-        try:
-            client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
-            client.admin.command('ping')
-            if uri is None:
-                MONGO_CLIENT = client
-                ensure_indexes(MONGO_CLIENT['api_gateway_db'])
-            else:
-                return client, None
-            return MONGO_CLIENT, None
-        except Exception as e:
-            return None, str(e)
-            
-    try:
-        MONGO_CLIENT.admin.command('ping')
-        return MONGO_CLIENT, None
-    except Exception as e:
-        MONGO_CLIENT = None
-        return None, str(e)
-
-# --- Logging voor Statistieken ---
-def log_statistic(action, source_app, endpoint="default"):
-    client, _ = get_db_connection()
-    if client:
-        try:
-            db = client['api_gateway_db']
-            db['statistics'].insert_one({
-                'timestamp': datetime.datetime.utcnow(),
-                'action': action,
-                'source': source_app,
-                'endpoint': endpoint
-            })
-        except Exception as e:
-            print(f"Log error: {e}")
-
-# --- Tag Management Logic ---
-def get_tag_color_map():
-    client, _ = get_db_connection()
-    tag_map = {}
-    
-    # Defaults
-    tag_map['system'] = '#6c757d'
-    tag_map['legacy'] = '#6c757d'
-    tag_map['taskey'] = '#0d6efd'
-    
-    if client:
-        try:
-            settings = client['api_gateway_db']['tag_settings'].find({})
-            for s in settings:
-                tag_map[s['tag']] = s['color']
-        except Exception as e:
-            print(f"Error fetching tag colors: {e}")
-            
-    return tag_map
-
-def update_tag_settings(original_name, new_name, color):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    db = client['api_gateway_db']
-    try:
-        if original_name != new_name:
-            db['endpoints'].update_many(
-                {'tags': original_name},
-                {'$set': {'tags.$': new_name}}
-            )
-            db['tag_settings'].delete_one({'tag': original_name})
-            
-        db['tag_settings'].update_one(
-            {'tag': new_name},
-            {'$set': {'tag': new_name, 'color': color}},
-            upsert=True
-        )
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-# --- Endpoint Management Functies ---
-def get_configured_endpoints(tag_filter=None, sort_by='alpha'):
-    client, _ = get_db_connection()
-    endpoints = []
-    
-    # Systeem Endpoints 
-    endpoints.append({
-        'name': 'data',
-        'description': 'Standaard Endpoint (Legacy / app_data)',
-        'system': True,
-        'tags': ['system', 'legacy'],
-        'created_at': datetime.datetime.min
-    })
-    
-    endpoints.append({
-        'name': 'items',
-        'description': 'Taskey Items (Taken en Notities)',
-        'system': True,
-        'tags': ['system', 'taskey'],
-        'created_at': datetime.datetime.min
-    })
-    endpoints.append({
-        'name': 'projects',
-        'description': 'Taskey Projecten',
-        'system': True,
-        'tags': ['system', 'taskey'],
-        'created_at': datetime.datetime.min
-    })
-
-    if client:
-        try:
-            # Haal DB endpoints op
-            db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}))
-            for ep in db_endpoints:
-                if ep.get('name') not in ['data', 'items', 'projects']: 
-                    ep['system'] = False
-                    ep['tags'] = ep.get('tags', [])
-                    endpoints.append(ep)
-        except Exception as e:
-            print(f"Fout bij ophalen endpoints: {e}")
-            
-    # Eerst filteren als dat nodig is
-    if tag_filter:
-        endpoints = [ep for ep in endpoints if tag_filter in ep.get('tags', [])]
-        
-    # Daarna sorteren op basis van de parameter
-    if sort_by == 'tag':
-        # Sorteer op de eerste tag. Als er geen tag is, gebruik 'zzzz' zodat hij onderaan komt.
-        # Secundaire sort is op naam.
-        endpoints.sort(key=lambda x: (x['tags'][0].lower() if x['tags'] else 'zzzz', x['name'].lower()))
-    else:
-        # Default: Alfabetisch op naam
-        endpoints.sort(key=lambda x: x['name'].lower())
-        
-    return endpoints
-
-def get_all_unique_tags():
-    client, _ = get_db_connection()
-    tags = set(['system', 'taskey', 'legacy'])
-    if client:
-        try:
-            db_tags = client['api_gateway_db']['endpoints'].distinct("tags")
-            for t in db_tags: tags.add(t)
-        except Exception as e: print(f"Error fetching tags: {e}")
-    return sorted(list(tags))
-
-def get_db_collection_name(endpoint_name):
-    if endpoint_name == 'data': return 'app_data'
-    elif endpoint_name == 'items': return 'data_items'
-    elif endpoint_name == 'projects': return 'data_projects'
-    else: return f"data_{endpoint_name}"
-
-def get_endpoint_stats(endpoint_name):
-    client, _ = get_db_connection()
-    if not client: return {'count': 0, 'size': '0 KB'}
-    coll_name = get_db_collection_name(endpoint_name)
-    try:
-        stats = client['api_gateway_db'].command("collstats", coll_name)
-        return {'count': stats.get('count', 0), 'size': format_size(stats.get('storageSize', 0))}
-    except:
-        return {'count': 0, 'size': '0 KB'}
-
-def process_tags_string(tags_str):
-    if not tags_str: return []
-    return [t.strip().lower() for t in tags_str.split(',') if t.strip()]
-
-def create_endpoint(name, description, tags_str):
-    if not re.match("^[a-zA-Z0-9_]+$", name):
-        return False, "Naam mag alleen letters, cijfers en underscores bevatten."
-    if name in ['data', 'items', 'projects']:
-        return False, f"De naam '{name}' is gereserveerd voor het systeem."
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    
-    tags = process_tags_string(tags_str)
-    
-    try:
-        client['api_gateway_db']['endpoints'].insert_one({
-            'name': name, 
-            'description': description, 
-            'tags': tags,
-            'created_at': datetime.datetime.utcnow()
-        })
-        client['api_gateway_db'].create_collection(get_db_collection_name(name))
-        return True, None
-    except Exception as e: return False, str(e)
-
-def update_endpoint_metadata(name, description, tags_str):
-    """Update de beschrijving en tags."""
-    if name in ['data', 'items', 'projects']:
-        return False, "Systeem endpoints kunnen niet worden gewijzigd."
-        
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    
-    tags = process_tags_string(tags_str)
-    
-    try:
-        result = client['api_gateway_db']['endpoints'].update_one(
-            {'name': name},
-            {'$set': {
-                'description': description, 
-                'tags': tags
-            }}
-        )
-        if result.matched_count == 0:
-            return False, "Endpoint niet gevonden."
-        return True, None
-    except Exception as e: return False, str(e)
-
-def delete_endpoint(name):
-    if name in ['data', 'items', 'projects']: return False
-    client, _ = get_db_connection()
-    if not client: return False
-    try:
-        client['api_gateway_db']['endpoints'].delete_one({'name': name})
-        client['api_gateway_db'][get_db_collection_name(name)].drop()
-        return True
-    except: return False
-
-def clear_endpoint_data(name):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    try:
-        coll_name = get_db_collection_name(name)
-        result = client['api_gateway_db'][coll_name].delete_many({})
-        return True, result.deleted_count
-    except Exception as e:
-        return False, str(e)
-
-# --- API Key Management ---
-def load_api_keys():
-    client, _ = get_db_connection()
-    if not client: return {}
-    keys = {}
-    for doc in client['api_gateway_db']['api_keys'].find({}):
-        keys[doc['client_id']] = {'key': doc['key'], 'description': doc['description']}
-    return keys
-
-def save_new_api_key(client_id, key, description): 
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    try:
-        client['api_gateway_db']['api_keys'].insert_one({
-            'client_id': client_id, 'key': key, 'description': description, 
-            'created_at': datetime.datetime.utcnow()
-        })
-        return True, None
-    except Exception as e: return False, str(e)
-
-def revoke_api_key_db(client_id):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    client['api_gateway_db']['api_keys'].delete_one({'client_id': client_id})
-    return True, None
-
-# --- USER MANAGEMENT FUNCTIES ---
-def load_all_users():
-    client, _ = get_db_connection()
-    if not client: return []
-    try:
-        users = list(client['api_gateway_db']['users'].find({}, {'username': 1, 'created_at': 1, 'token_validity_minutes': 1}))
-        return [{'username': u['username'], 'created_at': u['created_at'], 'validity': u.get('token_validity_minutes', 1440)} for u in users]
-    except Exception as e:
-        print(f"Error loading users: {e}")
-        return []
-
-def delete_user_db(username):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    try:
-        client['api_gateway_db']['users'].delete_one({'username': username})
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-# --- AUTHENTICATIE ROUTE (JWT Login) ---
-@app.route('/api/auth/login', methods=['POST'])
-def login_api():
-    client, _ = get_db_connection()
-    data = request.json
-    if not data or 'username' not in data or 'password' not in data:
-        log_statistic("login_failed_invalid_input", get_remote_address(), "auth")
-        return jsonify({"error": "Ongeldige input: gebruikersnaam en wachtwoord vereist."}), 400
-        
-    username = data['username']
-    password = data['password']
-    
-    if not client: 
-        log_statistic("login_failed_db_error", get_remote_address(), "auth")
-        return jsonify({"error": "DB failure"}), 503
-    
-    db = client['api_gateway_db']
-    user = db['users'].find_one({'username': username})
-    
-    if user and check_password(password, user['password_hash']):
-        user_expiry = user.get('token_validity_minutes', app.config['JWT_EXPIRY_MINUTES'])
-        token = encode_auth_token(user['_id'], user_expiry)
-        log_statistic("login_success", username, "auth")
-        
-        response = make_response(jsonify({
-            "status": "success", 
-            "token": token,
-            "expires_in_minutes": user_expiry,
-            "message": "Token gegenereerd. Ook opgeslagen als HttpOnly cookie."
-        }))
-        response.set_cookie(app.config['JWT_COOKIE_NAME'], token, httponly=True, secure=False, samesite='Lax', max_age=user_expiry * 60)
-        return response, 200
-    else:
-        log_statistic("login_failed", get_remote_address(), "auth")
-        return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
-
-@app.route('/api/auth/logout', methods=['POST'])
-def logout_api():
-    response = make_response(jsonify({"status": "success", "message": "Uitgelogd (Cookie gewist)."}))
-    response.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True)
-    return response, 200
-        
-# --- Rate Limiter & Auth ---
-def get_client_id():
-    auth_header = request.headers.get('Authorization')
-    token = None
-    if auth_header and auth_header.startswith('Bearer '):
-        token = auth_header.split(' ')[1]
-    if not token:
-        token = request.cookies.get(app.config['JWT_COOKIE_NAME'])
-
-    if token:
-        client, _ = get_db_connection()
-        if client:
-            success, user_id_or_error = decode_auth_token(token)
-            if success:
-                db = client['api_gateway_db']
-                user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
-                return user['username'] if user else f"user_{user_id_or_error}"
-            if auth_header:
-                key_doc = client['api_gateway_db']['api_keys'].find_one({'key': token}, {'client_id': 1})
-                if key_doc: return key_doc['client_id']
-    return get_remote_address()
-
-limiter = Limiter(key_func=get_client_id, app=app, default_limits=["2000 per day", "500 per hour"], storage_uri="memory://")
-
-def require_auth(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
-        token = None
-        auth_type = "unknown"
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            auth_type = "header"
-        if not token:
-            token = request.cookies.get(app.config['JWT_COOKIE_NAME'])
-            auth_type = "cookie"
-
-        if not token: return jsonify({"error": "Authenticatie vereist (Bearer Token of Cookie)"}), 401
-            
-        client, _ = get_db_connection()
-        success, user_id_or_error = decode_auth_token(token)
-        
-        if success:
-            db = client['api_gateway_db']
-            try:
-                user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
-                client_id = user['username'] if user else f"user_{user_id_or_error}"
-                request.client_id = client_id
-                return f(*args, **kwargs)
-            except Exception as e:
-                return jsonify({"error": f"Ongeldige JWT Sub. Detail: {e}"}), 401
-        
-        if auth_type == "header":
-            jwt_error_detail = user_id_or_error
-            client_id = None
-            if client:
-                db = client['api_gateway_db']
-                key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
-                if key_doc: client_id = key_doc['client_id']
-            if client_id:
-                request.client_id = client_id
-                return f(*args, **kwargs)
-            else:
-                return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {jwt_error_detail}"}), 401
-        else:
-             return jsonify({"error": f"Sessie verlopen. (Detail: {user_id_or_error})"}), 401
-    return wrapper
-
-def require_dashboard_auth(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            flash("Log eerst in om het dashboard te bekijken.", "warning")
-            return redirect(url_for('dashboard_login'))
-        return f(*args, **kwargs)
-    return decorated_function
-
-# --- CONTEXT PROCESSOR ---
-@app.context_processor
-def inject_sidebar_data():
-    if request.endpoint and 'static' not in request.endpoint:
-        return dict(all_tags=get_all_unique_tags(), tag_map=get_tag_color_map())
-    return dict()
-
-# ---------------------------------------------------
-
-# --- DASHBOARD LOGIC (Web Interface Routes) ---
-
-@app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per 60 second", key_func=get_remote_address)
-def dashboard_login():
-    if 'username' in session: return redirect(url_for('dashboard'))
-    if request.method == 'POST':
-        client, _ = get_db_connection()
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if not client: 
-            flash("DB fout: Kan geen verbinding maken.", "danger")
-            return redirect(url_for('dashboard_login'))
-        db = client['api_gateway_db']
-        user = db['users'].find_one({'username': username})
-        if user and check_password(password, user['password_hash']):
-            session['username'] = username
-            flash(f"Succesvol ingelogd als {username}.", "success")
-            return redirect(url_for('dashboard'))
-        else:
-            log_statistic("login_failed_dashboard", get_remote_address(), "dashboard") 
-            flash("Ongeldige gebruikersnaam of wachtwoord.", "danger")
-            return redirect(url_for('dashboard_login'))
-    content = render_template_string(LOGIN_CONTENT)
-    return render_template_string(BASE_LAYOUT, page='login', page_content=content)
-
-@app.errorhandler(429)
-def ratelimit_handler(e):
-    log_statistic("ratelimit_hit", get_remote_address(), "dashboard")
-    flash(str(e.description), "danger")
-    return redirect(url_for('dashboard_login'))
-
-@app.route('/logout')
-def dashboard_logout():
-    session.pop('username', None)
-    flash("Je bent uitgelogd.", "info")
-    return redirect(url_for('dashboard_login'))
+# ------------------------------------------------------------------------------
+# FRONTEND / DASHBOARD ROUTES
+# ------------------------------------------------------------------------------
 
 @app.route('/')
-@require_dashboard_auth 
 def dashboard():
-    time_range = request.args.get('range', '6h')
-    login_range = request.args.get('login_range', '24h') 
+    """Toont het dashboard met sidebar en endpoints."""
+    # Haal filter op uit URL (bijv: /?app=MijnApp)
+    selected_app = request.args.get('app')
     
-    range_map = {
-        '6h': {'delta': datetime.timedelta(hours=6), 'label': 'Laatste 6 uur', 'group': '%H:00', 'fill': 'hour'},
-        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 uur', 'group': '%H:00', 'fill': 'hour'},
-        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste Week', 'group': '%a %d', 'fill': 'day'},
-        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste Maand', 'group': '%d %b', 'fill': 'day'},
-        '365d': {'delta': datetime.timedelta(days=365), 'label': 'Laatste Jaar', 'group': '%b %Y', 'fill': 'month'},
-    }
+    # Haal alle unieke applicatie namen op voor de sidebar
+    all_metas = list(endpoints_meta.find().sort("app_name", 1))
+    unique_apps = sorted(list(set([m['app_name'] for m in all_metas])))
     
-    login_range_map = {
-        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 Uur'},
-        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste 7 Dagen'},
-        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste 30 Dagen'},
-    }
-    
-    current_range = range_map.get(time_range, range_map['6h'])
-    current_login_range = login_range_map.get(login_range, login_range_map['24h'])
-    
-    start_time = datetime.datetime.utcnow() - current_range['delta']
-    login_start_time = datetime.datetime.utcnow() - current_login_range['delta']
-    
-    client, _ = get_db_connection()
-    db_connected = client is not None
-    stats_count = 0
-    unique_clients = []
-    chart_data = {"labels": [], "counts": []}
-    total_size = 0
-    failed_logins = {} 
-
-    if db_connected:
-        try:
-            db = client['api_gateway_db']
-            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            stats_count = db['statistics'].count_documents({'timestamp': {'$gte': yesterday}})
-            unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
-            
-            endpoints = get_configured_endpoints()
-            for ep in endpoints:
-                 try: 
-                    coll_name = get_db_collection_name(ep['name'])
-                    s = db.command("collstats", coll_name)
-                    total_size += s.get('storageSize', 0)
-                 except: pass
-
-            pipeline = [
-                {'$match': {'timestamp': {'$gte': start_time}}},
-                {'$group': {
-                    '_id': {'$dateToString': {'format': current_range['group'], 'date': '$timestamp'}}, 
-                    'count': {'$sum': 1},
-                    'latest_time': {'$max': '$timestamp'}
-                }},
-                {'$sort': {'latest_time': 1}}
-            ]
-            agg_dict = {item['_id']: item['count'] for item in list(db['statistics'].aggregate(pipeline))}
-            
-            current = start_time
-            now = datetime.datetime.utcnow()
-            
-            if current_range['fill'] == 'hour':
-                step = datetime.timedelta(hours=1)
-                current = current.replace(minute=0, second=0, microsecond=0)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_data['labels'].append(label)
-                    chart_data['counts'].append(agg_dict.get(label, 0))
-                    current += step
-            elif current_range['fill'] == 'day':
-                step = datetime.timedelta(days=1)
-                current = current.replace(hour=0, minute=0, second=0, microsecond=0)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_data['labels'].append(label)
-                    chart_data['counts'].append(agg_dict.get(label, 0))
-                    current += step
-            elif current_range['fill'] == 'month':
-                current = datetime.datetime(current.year, current.month, 1)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_data['labels'].append(label)
-                    chart_data['counts'].append(agg_dict.get(label, 0))
-                    nm = current.month + 1
-                    ny = current.year
-                    if nm > 12:
-                        nm = 1
-                        ny += 1
-                    current = datetime.datetime(ny, nm, 1)
-
-            failed_logins_pipeline = [
-                {'$match': {
-                    'action': {'$in': ['login_failed', 'login_failed_dashboard', 'login_failed_db_error', 'login_failed_invalid_input']},
-                    'timestamp': {'$gte': login_start_time}
-                }},
-                {'$group': {
-                    '_id': '$source',
-                    'count': {'$sum': 1}
-                }},
-                {'$sort': {'count': -1}}
-            ]
-            failed_logins = {item['_id']: item['count'] for item in list(db['statistics'].aggregate(failed_logins_pipeline))}
-        except Exception as e:
-            print(f"Dashboard Data Error: {e}")
-            pass
-            
-    content = render_template_string(DASHBOARD_CONTENT,
-        db_connected=db_connected, stats_count=stats_count, client_count=len(unique_clients),
-        clients=unique_clients, chart_data=chart_data, total_storage=format_size(total_size),
-        time_range=time_range, current_range_label=current_range['label'],
-        login_range=login_range, login_range_label=current_login_range['label'],
-        failed_logins=failed_logins)
-    return render_template_string(BASE_LAYOUT, page='dashboard', page_content=content)
-
-@app.route('/endpoints', methods=['GET', 'POST'])
-@require_dashboard_auth 
-def endpoints_page():
-    if request.method == 'POST':
-        name = request.form.get('name')
-        desc = request.form.get('description')
-        tags = request.form.get('tags')
-        
-        success, err = create_endpoint(name, desc, tags)
-        if success: flash(f"Endpoint '{name}' aangemaakt.", "success")
-        else: flash(f"Fout: {err}", "danger")
-        return redirect(url_for('endpoints_page'))
-
-    tag_filter = request.args.get('tag')
-    sort_by = request.args.get('sort', 'alpha') # Standaard alfabetisch
-    
-    endpoints = get_configured_endpoints(tag_filter=tag_filter, sort_by=sort_by)
-    for ep in endpoints:
-        ep['stats'] = get_endpoint_stats(ep['name'])
-        
-    content = render_template_string(ENDPOINTS_CONTENT, 
-                                     endpoints=endpoints, 
-                                     active_filter=tag_filter,
-                                     current_sort=sort_by)
-    return render_template_string(BASE_LAYOUT, page='endpoints', page_content=content)
-
-@app.route('/endpoints/update', methods=['POST'])
-@require_dashboard_auth
-def update_endpoint_route():
-    name = request.form.get('name')
-    desc = request.form.get('description')
-    tags = request.form.get('tags')
-    
-    success, err = update_endpoint_metadata(name, desc, tags)
-    if success: 
-        flash(f"Endpoint '{name}' bijgewerkt.", "success")
-    else: 
-        flash(f"Fout bij updaten: {err}", "danger")
-        
-    return redirect(url_for('endpoints_page'))
-
-@app.route('/endpoints/delete', methods=['POST'])
-@require_dashboard_auth 
-def delete_endpoint_route():
-    name = request.form.get('name')
-    if delete_endpoint(name): flash(f"Endpoint '{name}' verwijderd.", "warning")
-    else: flash("Kon endpoint niet verwijderen.", "danger")
-    return redirect(url_for('endpoints_page'))
-
-@app.route('/endpoints/clear_data', methods=['POST'])
-@require_dashboard_auth
-def clear_data_route():
-    name = request.form.get('name')
-    success, result_or_err = clear_endpoint_data(name)
-    if success:
-        flash(f"Data van endpoint '{name}' succesvol gewist ({result_or_err} items verwijderd).", "success")
+    # Filter endpoints voor de view
+    if selected_app:
+        filtered_endpoints = [m for m in all_metas if m['app_name'] == selected_app]
     else:
-        flash(f"Kon data niet wissen: {result_or_err}", "danger")
-    return redirect(url_for('endpoints_page'))
-
-@app.route('/client/<source_app>')
-@require_dashboard_auth 
-def client_detail(source_app):
-    client, _ = get_db_connection()
-    logs = []
-    total_requests = 0
-    has_key = False
-    is_user = False
-    
-    if client:
-        db = client['api_gateway_db']
-        yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-        total_requests = db['statistics'].count_documents({'source': source_app, 'timestamp': {'$gte': yesterday}})
-        if db['api_keys'].find_one({'client_id': source_app}): has_key = True
-        if db['users'].find_one({'username': source_app}): is_user = True
-        cursor = db['statistics'].find({'source': source_app}).sort('timestamp', -1).limit(20)
-        for doc in cursor:
-            logs.append({
-                'timestamp': doc['timestamp'].isoformat(), 
-                'action': doc.get('action', '-'),
-                'endpoint': doc.get('endpoint', 'general')
-            })
-            
-    content = render_template_string(CLIENT_DETAIL_CONTENT, 
-                                   source_app=source_app, 
-                                   logs=logs,
-                                   total_requests=total_requests,
-                                   has_key=has_key,
-                                   is_user=is_user)
-    return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
-
-@app.route('/settings/tags/update', methods=['POST'])
-@require_dashboard_auth
-def update_tag_route():
-    original_name = request.form.get('original_name')
-    new_name = request.form.get('new_name')
-    color = request.form.get('color')
-    
-    if not new_name:
-        flash("Naam mag niet leeg zijn", "danger")
-        return redirect(url_for('settings'))
+        filtered_endpoints = all_metas # "Alles" geselecteerd
         
-    success, err = update_tag_settings(original_name, new_name, color)
-    if success:
-        if original_name != new_name:
-            flash(f"Tag hernoemd van '{original_name}' naar '{new_name}' en kleur opgeslagen.", "success")
-        else:
-            flash(f"Instellingen voor tag '{new_name}' opgeslagen.", "success")
-    else:
-        flash(f"Fout bij opslaan tag: {err}", "danger")
-        
-    return redirect(url_for('settings'))
+    # Voeg statistieken toe (aantal documenten per endpoint)
+    for ep in filtered_endpoints:
+        col_name = get_data_collection_name(ep['app_name'], ep['endpoint_name'])
+        ep['doc_count'] = db[col_name].count_documents({})
+        ep['collection_name'] = col_name
 
-@app.route('/settings', methods=['GET', 'POST'])
-@require_dashboard_auth 
-def settings():
-    client, _ = get_db_connection()
-    db = client['api_gateway_db'] if client else None
+    return render_template_string(HTML_TEMPLATE, 
+                                  apps=unique_apps, 
+                                  endpoints=filtered_endpoints, 
+                                  selected_app=selected_app)
+
+# ------------------------------------------------------------------------------
+# API ROUTES (DYNAMISCH)
+# ------------------------------------------------------------------------------
+
+@app.route('/api/<app_name>/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
+def handle_endpoint(app_name, endpoint_name):
+    """
+    Dynamische route voor: /api/<app>/<endpoint>
+    GET: Haal alle data op
+    POST: Voeg nieuwe data toe
+    DELETE: Verwijder de hele collectie (pas op!)
+    """
+    # Check of endpoint bestaat in metadata
+    meta = endpoints_meta.find_one({"app_name": app_name, "endpoint_name": endpoint_name})
+    if not meta:
+        return jsonify({"error": f"Endpoint '/api/{app_name}/{endpoint_name}' not defined."}), 404
     
-    if request.method == 'POST':
-        action = request.form.get('action')
-        if action == 'create_user':
-            username = request.form.get('username')
-            password = request.form.get('password')
-            token_validity = int(request.form.get('token_validity_minutes', 1440))
-            if db is None:
-                flash("Fout: Geen DB verbinding.", "danger")
-            elif not username or not password:
-                flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
-            else:
-                try:
-                    result = db['users'].insert_one({
-                        'username': username,
-                        'password_hash': hash_password(password),
-                        'created_at': datetime.datetime.utcnow(),
-                        'role': 'admin',
-                        'token_validity_minutes': token_validity 
-                    })
-                    new_user_id = result.inserted_id
-                    new_token = encode_auth_token(new_user_id, token_validity)
-                    days = token_validity // 1440
-                    time_msg = f"{days} dagen" if days >= 1 else "24 uur"
-                    token_html = f"""
-                    <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
-                    <div class="d-flex align-items-center">
-                        <input type="text" class="form-control bg-dark text-warning small font-monospace jwt-input-fix" readonly 
-                            value="{new_token}" id="jwt-token-input">
-                        <button type="button" class="btn btn-warning ms-2 flex-shrink-0" id="jwt-copy-button" title="Kopieer JWT">
-                            <i class="bi bi-clipboard"></i> Kopieer Token
-                        </button>
-                    </div>
-                    <p class="mt-2 small text-muted">Dit token is <b>{time_msg}</b> geldig.</p>
-                    """
-                    flash(token_html, "success")
-                except OperationFailure as e:
-                    if "E11000 duplicate key" in str(e): flash(f"Fout: Gebruikersnaam '{username}' bestaat al.", "danger")
-                    else: flash(f"Fout bij aanmaken gebruiker: {e}", "danger")
-                except Exception as e: flash(f"Onverwachte fout: {e}", "danger")
-
-        elif action == 'delete_user':
-            username = request.form.get('username')
-            success, err = delete_user_db(username)
-            if success: flash(f"Gebruiker '{username}' verwijderd. Actieve JWT's zijn ongeldig geworden.", "warning")
-            else: flash(f"Fout: {err}", "danger")
-        elif action == 'revoke_key':
-            revoke_api_key_db(request.form.get('client_id'))
-        elif action == 'save_uri':
-            app.config['MONGO_URI'] = request.form.get('mongo_uri')
-            flash("URI opgeslagen", "info")
-            
-        return redirect(url_for('settings'))
-
-    api_keys = load_api_keys()
-    active_users = load_all_users() 
-    content = render_template_string(SETTINGS_CONTENT, 
-                                     api_keys=api_keys, 
-                                     active_users=active_users,
-                                     current_uri=app.config['MONGO_URI'])
-    return render_template_string(BASE_LAYOUT, page='settings', page_content=content)
-
-@app.route('/api/health')
-def health():
-    client, _ = get_db_connection()
-    return jsonify({"status": "running", "db": "ok" if client else "error"})
-
-# --- DYNAMIC API ENDPOINT (General) ---
-@app.route('/api/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
-@require_auth
-@limiter.limit("1000 per hour")
-def handle_dynamic_endpoint(endpoint_name):
-    client, _ = get_db_connection()
-    if not client: return jsonify({"error": "DB failure"}), 503
-    db = client['api_gateway_db']
-    
-    if endpoint_name not in ['data', 'items', 'projects'] and not db['endpoints'].find_one({'name': endpoint_name}):
-        return jsonify({"error": f"Endpoint '{endpoint_name}' not found"}), 404
-
-    coll_name = get_db_collection_name(endpoint_name)
-    collection = db[coll_name]
-    client_id = getattr(request, 'client_id', 'unknown')
-
-    if request.method == 'POST':
-        data = request.json
-        if not data: return jsonify({"error": "No JSON"}), 400
-        data['meta'] = {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
-        try:
-            result = collection.insert_one(data)
-            log_statistic("post_data", client_id, endpoint_name)
-            saved_doc = collection.find_one({'_id': result.inserted_id})
-            if saved_doc:
-                saved_doc['id'] = str(saved_doc['_id'])
-                del saved_doc['_id']
-                return jsonify({"id": saved_doc['id'], "data": saved_doc}), 201
-            else: return jsonify({"status": "created", "id": str(result.inserted_id), "data": {}}), 201
-        except Exception as e:
-            return jsonify({"error": f"Kon document niet opslaan: {e}"}), 500
-
-    elif request.method == 'GET':
-        query = {}
-        for k, v in request.args.items():
-            if k != '_limit': query[k] = v 
-        query['meta.client_id'] = client_id
-        limit = int(request.args.get('_limit', 50))
-        docs = list(collection.find(query).sort("meta.created_at", -1).limit(limit))
-        result_docs = []
-        for d in docs:
-            d['id'] = str(d['_id'])
-            del d['_id']
-            result_docs.append({"id": d['id'], "data": d })
-        log_statistic("read_data", client_id, endpoint_name)
-        return jsonify(result_docs), 200
-
-    elif request.method == 'DELETE':
-        query = {}
-        for k, v in request.args.items(): query[k] = v
-        if not query: return jsonify({"error": "DELETE requires query parameters for safety"}), 400
-        query['meta.client_id'] = client_id
-        result = collection.delete_many(query)
-        log_statistic("delete_bulk", client_id, endpoint_name)
-        return jsonify({"status": "deleted", "count": result.deleted_count}), 200
-
-    return jsonify({"error": "Method not allowed"}), 405
-
-# --- SINGLE DOCUMENT OPERATIONS ---
-@app.route('/api/<endpoint_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
-@require_auth
-@limiter.limit("1000 per hour")
-def handle_single_document(endpoint_name, doc_id):
-    client, _ = get_db_connection()
-    if not client: return jsonify({"error": "DB failure"}), 503
-    db = client['api_gateway_db']
-
-    coll_name = get_db_collection_name(endpoint_name)
-    collection = db[coll_name]
-    client_id = getattr(request, 'client_id', 'unknown')
-
-    try: oid = ObjectId(doc_id)
-    except: return jsonify({"error": "Invalid ID format"}), 400
+    col_name = get_data_collection_name(app_name, endpoint_name)
+    collection = db[col_name]
 
     if request.method == 'GET':
-        doc = collection.find_one({'_id': oid})
-        if not doc: return jsonify({"error": "Not found"}), 404
-        if doc.get('meta', {}).get('client_id') != client_id: return jsonify({"error": "Not found or access denied"}), 403
-        doc['id'] = str(doc['_id'])
-        del doc['_id']
-        log_statistic("read_one", client_id, endpoint_name)
-        return jsonify({"id": doc['id'], "data": doc}), 200
+        data = list(collection.find())
+        return jsonify([serialize_doc(doc) for doc in data]), 200
+
+    elif request.method == 'POST':
+        payload = request.json
+        if not payload:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        # Voeg timestamp toe indien niet aanwezig
+        if isinstance(payload, dict) and "created_at" not in payload:
+            payload["created_at"] = datetime.utcnow()
+        
+        result = collection.insert_one(payload)
+        return jsonify({"message": "Created", "id": str(result.inserted_id)}), 201
+    
+    elif request.method == 'DELETE':
+        # Let op: Dit verwijdert ALLE data in dit endpoint, maar behoudt de definitie
+        collection.delete_many({})
+        return jsonify({"message": "All data cleared from endpoint"}), 200
+
+
+@app.route('/api/<app_name>/<endpoint_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
+def handle_document(app_name, endpoint_name, doc_id):
+    """
+    Dynamische route voor specifiek document: /api/<app>/<endpoint>/<id>
+    """
+    meta = endpoints_meta.find_one({"app_name": app_name, "endpoint_name": endpoint_name})
+    if not meta:
+        return jsonify({"error": "Endpoint not found"}), 404
+
+    col_name = get_data_collection_name(app_name, endpoint_name)
+    collection = db[col_name]
+    
+    try:
+        oid = ObjectId(doc_id)
+    except:
+        return jsonify({"error": "Invalid ID format"}), 400
+
+    if request.method == 'GET':
+        doc = collection.find_one({"_id": oid})
+        if not doc:
+            return jsonify({"error": "Document not found"}), 404
+        return jsonify(serialize_doc(doc))
 
     elif request.method == 'PUT':
-        data = request.json
-        if not data: return jsonify({"error": "No JSON"}), 400
-        update_doc = data.copy()
-        if 'id' in update_doc: del update_doc['id'] 
-        if '_id' in update_doc: del update_doc['_id'] 
-        if 'meta' in update_doc: del update_doc['meta'] 
-        update_doc['meta'] = data.get('meta', {})
-        update_doc['meta']['updated_at'] = datetime.datetime.utcnow()
-        update_doc['meta']['client_id'] = client_id 
-
-        result = collection.update_one({'_id': oid, 'meta.client_id': client_id}, {'$set': update_doc})
-        if result.matched_count == 0: return jsonify({"error": "Not found or access denied"}), 404
-        updated_doc = collection.find_one({'_id': oid})
-        updated_doc['id'] = str(updated_doc['_id'])
-        del updated_doc['_id']
-        log_statistic("update_one", client_id, endpoint_name)
-        return jsonify({"id": updated_doc['id'], "data": updated_doc}), 200
+        payload = request.json
+        if not payload:
+            return jsonify({"error": "No data"}), 400
+        
+        # update_one met $set zorgt dat we velden updaten, niet het hele doc overschrijven (tenzij gewenst)
+        # Hier vervangen we de inhoud behalve _id
+        collection.replace_one({"_id": oid}, payload)
+        return jsonify({"message": "Updated", "id": doc_id})
 
     elif request.method == 'DELETE':
-        result = collection.delete_one({'_id': oid, 'meta.client_id': client_id})
-        if result.deleted_count == 0: return jsonify({"error": "Not found or access denied"}), 404
-        log_statistic("delete_one", client_id, endpoint_name)
-        return jsonify({"status": "deleted"}), 204
+        result = collection.delete_one({"_id": oid})
+        if result.deleted_count == 0:
+            return jsonify({"error": "Document not found"}), 404
+        return jsonify({"message": "Deleted", "id": doc_id})
 
-    return jsonify({"error": "Method not allowed"}), 405
+# ------------------------------------------------------------------------------
+# BEHEER ROUTES (Create, Rename, Import, Export)
+# ------------------------------------------------------------------------------
+
+@app.route('/manage/add', methods=['POST'])
+def add_endpoint():
+    app_name = request.form.get('app_name')
+    endpoint_name = request.form.get('endpoint_name')
+    description = request.form.get('description', '')
+
+    if not app_name or not endpoint_name:
+        flash("Applicatie naam en Endpoint naam zijn verplicht!", "error")
+        return redirect(url_for('dashboard'))
+
+    # Check dubbele
+    exists = endpoints_meta.find_one({"app_name": app_name, "endpoint_name": endpoint_name})
+    if exists:
+        flash("Dit endpoint bestaat al voor deze applicatie.", "error")
+        return redirect(url_for('dashboard'))
+
+    endpoints_meta.insert_one({
+        "app_name": app_name,
+        "endpoint_name": endpoint_name,
+        "description": description,
+        "created_at": datetime.utcnow()
+    })
+    
+    flash(f"Endpoint /api/{app_name}/{endpoint_name} aangemaakt.", "success")
+    return redirect(url_for('dashboard', app=app_name))
+
+@app.route('/manage/delete', methods=['POST'])
+def delete_endpoint():
+    """Verwijdert definitie EN data collectie"""
+    app_name = request.form.get('app_name')
+    endpoint_name = request.form.get('endpoint_name')
+
+    col_name = get_data_collection_name(app_name, endpoint_name)
+    
+    # Drop data collectie
+    db[col_name].drop()
+    
+    # Verwijder metadata
+    endpoints_meta.delete_one({"app_name": app_name, "endpoint_name": endpoint_name})
+    
+    flash(f"Endpoint {app_name}/{endpoint_name} en alle data verwijderd.", "success")
+    return redirect(url_for('dashboard'))
+
+@app.route('/manage/rename_app', methods=['POST'])
+def rename_application():
+    old_app_name = request.form.get('old_app_name')
+    new_app_name = request.form.get('new_app_name')
+    
+    if not old_app_name or not new_app_name:
+        flash("Namen mogen niet leeg zijn", "error")
+        return redirect(url_for('dashboard'))
+
+    # Zoek alle endpoints van deze app
+    endpoints = list(endpoints_meta.find({"app_name": old_app_name}))
+    
+    count = 0
+    for ep in endpoints:
+        old_col = get_data_collection_name(old_app_name, ep['endpoint_name'])
+        new_col = get_data_collection_name(new_app_name, ep['endpoint_name'])
+        
+        # 1. Hernoem MongoDB collectie (indien data bestaat)
+        if old_col in db.list_collection_names():
+            try:
+                db[old_col].rename(new_col)
+            except Exception as e:
+                flash(f"Fout bij hernoemen data: {e}", "error")
+        
+        # 2. Update metadata
+        endpoints_meta.update_one(
+            {"_id": ep["_id"]}, 
+            {"$set": {"app_name": new_app_name}}
+        )
+        count += 1
+        
+    flash(f"Applicatie '{old_app_name}' hernoemd naar '{new_app_name}'. {count} endpoints bijgewerkt.", "success")
+    return redirect(url_for('dashboard', app=new_app_name))
+
+@app.route('/manage/rename_endpoint', methods=['POST'])
+def rename_endpoint_route():
+    app_name = request.form.get('app_name')
+    old_ep_name = request.form.get('old_endpoint_name')
+    new_ep_name = request.form.get('new_endpoint_name')
+    
+    # Check of nieuwe naam al bestaat
+    if endpoints_meta.find_one({"app_name": app_name, "endpoint_name": new_ep_name}):
+        flash("Nieuwe naam bestaat al binnen deze applicatie.", "error")
+        return redirect(url_for('dashboard', app=app_name))
+
+    old_col = get_data_collection_name(app_name, old_ep_name)
+    new_col = get_data_collection_name(app_name, new_ep_name)
+
+    # 1. Hernoem collectie
+    if old_col in db.list_collection_names():
+        db[old_col].rename(new_col)
+    
+    # 2. Update metadata
+    endpoints_meta.update_one(
+        {"app_name": app_name, "endpoint_name": old_ep_name},
+        {"$set": {"endpoint_name": new_ep_name}}
+    )
+
+    flash(f"Endpoint hernoemd naar {new_ep_name}", "success")
+    return redirect(url_for('dashboard', app=app_name))
+
+@app.route('/manage/export/<app_name>/<endpoint_name>')
+def export_data(app_name, endpoint_name):
+    col_name = get_data_collection_name(app_name, endpoint_name)
+    data = list(db[col_name].find())
+    
+    # Gebruik json_util voor correcte conversie van ObjectId en Dates
+    json_str = json_util.dumps(data, indent=2)
+    
+    return send_file(
+        io.BytesIO(json_str.encode('utf-8')),
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=f"{app_name}_{endpoint_name}_backup.json"
+    )
+
+@app.route('/manage/import/<app_name>/<endpoint_name>', methods=['POST'])
+def import_data(app_name, endpoint_name):
+    if 'file' not in request.files:
+        flash("Geen bestand geselecteerd", "error")
+        return redirect(url_for('dashboard', app=app_name))
+        
+    file = request.files['file']
+    if file.filename == '':
+        flash("Geen bestand geselecteerd", "error")
+        return redirect(url_for('dashboard', app=app_name))
+
+    try:
+        data = json_util.loads(file.read())
+        if not isinstance(data, list):
+            flash("JSON bestand moet een lijst van documenten zijn.", "error")
+            return redirect(url_for('dashboard', app=app_name))
+        
+        col_name = get_data_collection_name(app_name, endpoint_name)
+        
+        # Schoon _id's op om conflicten te voorkomen bij insert (of gebruik save logica)
+        # Hier kiezen we voor toevoegen. Als je wilt overschrijven, moet je eerst droppen.
+        clean_data = []
+        for doc in data:
+            if "_id" in doc:
+                del doc["_id"] # Laat Mongo nieuwe ID's genereren om collisions te voorkomen
+            clean_data.append(doc)
+            
+        if clean_data:
+            db[col_name].insert_many(clean_data)
+            
+        flash(f"{len(clean_data)} documenten succesvol geïmporteerd.", "success")
+    except Exception as e:
+        flash(f"Fout bij importeren: {str(e)}", "error")
+
+    return redirect(url_for('dashboard', app=app_name))
+
+
+# ------------------------------------------------------------------------------
+# UI TEMPLATES (HTML/CSS)
+# ------------------------------------------------------------------------------
+# In een productieomgeving zou je dit in templates/index.html en static/styles.css zetten.
+# Voor nu zit alles hierin voor 1-file deployment.
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Gateway Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #64748b;
+            --background-color: #f8fafc;
+            --sidebar-bg: #1e293b;
+            --sidebar-text: #e2e8f0;
+            --card-bg: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --success: #22c55e;
+            --danger: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: var(--background-color); color: var(--text-primary); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Sidebar */
+        .sidebar { width: 280px; background: var(--sidebar-bg); color: var(--sidebar-text); display: flex; flex-direction: column; padding: 1.5rem; transition: all 0.3s ease; }
+        .sidebar-header { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #334155; }
+        .logo { font-size: 1.5rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.75rem; }
+        
+        .nav-section { margin-bottom: 2rem; }
+        .nav-title { text-transform: uppercase; font-size: 0.75rem; font-weight: 600; color: #94a3b8; margin-bottom: 0.75rem; letter-spacing: 0.05em; }
+        .nav-item { display: flex; align-items: center; padding: 0.75rem 1rem; color: #cbd5e1; text-decoration: none; border-radius: 0.5rem; transition: all 0.2s; margin-bottom: 0.25rem; }
+        .nav-item:hover, .nav-item.active { background: #334155; color: #fff; transform: translateX(4px); }
+        .nav-item i { width: 20px; margin-right: 0.75rem; }
+
+        /* Main Content */
+        .main-content { flex: 1; overflow-y: auto; padding: 2rem; background: var(--background-color); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+        .page-title h1 { font-size: 1.8rem; font-weight: 600; color: var(--text-primary); }
+        .page-title p { color: var(--text-secondary); margin-top: 0.25rem; }
+        
+        .btn { padding: 0.6rem 1.2rem; border-radius: 0.5rem; border: none; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem; transition: all 0.2s; text-decoration: none; font-size: 0.9rem; }
+        .btn-primary { background: var(--primary-color); color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+        .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); }
+        .btn-ghost:hover { background: #f1f5f9; color: var(--text-primary); }
+
+        /* Grid & Cards */
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem; }
+        .card { background: var(--card-bg); border-radius: 1rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid var(--border-color); transition: transform 0.2s, box-shadow 0.2s; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); }
+        
+        .card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem; }
+        .method-badge { background: #dbeafe; color: #1e40af; padding: 0.25rem 0.6rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600; }
+        .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+        .card-path { font-family: 'Monaco', 'Consolas', monospace; font-size: 0.85rem; color: var(--text-secondary); background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 0.25rem; word-break: break-all; }
+        
+        .stat-row { display: flex; gap: 1.5rem; margin: 1rem 0; padding: 1rem 0; border-top: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9; }
+        .stat-item { display: flex; flex-direction: column; }
+        .stat-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; }
+        .stat-value { font-weight: 600; color: var(--text-primary); }
+
+        .card-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+
+        /* Forms & Modals */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: white; padding: 2rem; border-radius: 1rem; width: 100%; max-width: 500px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 1.5rem; }
+        .modal-title { font-size: 1.25rem; font-weight: 600; }
+        .close-modal { cursor: pointer; font-size: 1.5rem; color: var(--text-secondary); }
+        
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; font-size: 0.9rem; }
+        .form-input { width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; font-family: inherit; transition: border-color 0.2s; }
+        .form-input:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+
+        .flash-messages { margin-bottom: 1.5rem; }
+        .alert { padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem; font-size: 0.9rem; }
+        .alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+        .alert-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+
+        .app-header-actions { display: flex; gap: 10px; align-items: center; }
+        .edit-icon { color: var(--text-secondary); cursor: pointer; font-size: 0.9rem; margin-left: 8px; }
+        .edit-icon:hover { color: var(--primary-color); }
+    </style>
+</head>
+<body>
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-network-wired"></i>
+                <span>API Gateway</span>
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Overzicht</div>
+            <a href="/" class="nav-item {{ 'active' if not selected_app else '' }}">
+                <i class="fas fa-th-large"></i> Alles
+            </a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Applicaties</div>
+            {% for app in apps %}
+            <a href="/?app={{ app }}" class="nav-item {{ 'active' if selected_app == app else '' }}">
+                <i class="fas fa-layer-group"></i> {{ app }}
+            </a>
+            {% endfor %}
+        </div>
+    </aside>
+
+    <main class="main-content">
+        
+        <div class="header">
+            <div class="page-title">
+                <div class="app-header-actions">
+                    <h1>
+                        {% if selected_app %}{{ selected_app }}{% else %}Alle Endpoints{% endif %}
+                    </h1>
+                    {% if selected_app %}
+                    <i class="fas fa-pencil-alt edit-icon" onclick="openRenameAppModal('{{ selected_app }}')" title="Applicatie hernoemen"></i>
+                    {% endif %}
+                </div>
+                <p>Beheer je API connecties en data opslag</p>
+            </div>
+            <button class="btn btn-primary" onclick="openModal('addEndpointModal')">
+                <i class="fas fa-plus"></i> Nieuw Endpoint
+            </button>
+        </div>
+
+        <div class="flash-messages">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                {% for category, message in messages %}
+                  <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+        </div>
+
+        <div class="grid-container">
+            {% for ep in endpoints %}
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fas fa-database" style="color: var(--primary-color);"></i>
+                        {{ ep.endpoint_name }}
+                    </div>
+                    <span class="method-badge">REST</span>
+                </div>
+                
+                <div class="card-path">/api/{{ ep.app_name }}/{{ ep.endpoint_name }}</div>
+                
+                <div class="stat-row">
+                    <div class="stat-item">
+                        <span class="stat-label">Documenten</span>
+                        <span class="stat-value">{{ ep.doc_count }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Aangemaakt</span>
+                        <span class="stat-value">{{ ep.created_at.strftime('%d-%m-%Y') if ep.created_at else '-' }}</span>
+                    </div>
+                </div>
+
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    {{ ep.description }}
+                </p>
+
+                <div class="card-actions">
+                    <a href="/manage/export/{{ ep.app_name }}/{{ ep.endpoint_name }}" class="btn btn-ghost btn-sm" title="Export JSON">
+                        <i class="fas fa-download"></i>
+                    </a>
+                    <button class="btn btn-ghost btn-sm" onclick="openImportModal('{{ ep.app_name }}', '{{ ep.endpoint_name }}')" title="Import JSON">
+                        <i class="fas fa-upload"></i>
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="openRenameEndpointModal('{{ ep.app_name }}', '{{ ep.endpoint_name }}')" title="Hernoem">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <form action="/manage/delete" method="POST" onsubmit="return confirm('Weet je zeker dat je dit endpoint en ALLE data wilt verwijderen?');" style="display:inline;">
+                        <input type="hidden" name="app_name" value="{{ ep.app_name }}">
+                        <input type="hidden" name="endpoint_name" value="{{ ep.endpoint_name }}">
+                        <button type="submit" class="btn btn-ghost btn-sm" style="color: var(--danger);" title="Verwijder">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% else %}
+            <div style="grid-column: 1/-1; text-align: center; padding: 4rem; color: var(--text-secondary);">
+                <i class="fas fa-cubes" style="font-size: 3rem; margin-bottom: 1rem; color: #cbd5e1;"></i>
+                <p>Nog geen endpoints gevonden. Maak er eentje aan!</p>
+            </div>
+            {% endfor %}
+        </div>
+    </main>
+
+    <div id="addEndpointModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Nieuw Endpoint</h3>
+                <span class="close-modal" onclick="closeModal('addEndpointModal')">&times;</span>
+            </div>
+            <form action="/manage/add" method="POST">
+                <div class="form-group">
+                    <label class="form-label">Applicatie Naam</label>
+                    <input type="text" name="app_name" class="form-input" placeholder="bv. KlantenPortaal" value="{{ selected_app if selected_app else '' }}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Endpoint Naam</label>
+                    <input type="text" name="endpoint_name" class="form-input" placeholder="bv. data" value="data" required>
+                    <small style="color: var(--text-secondary);">Standaard '/data'</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Beschrijving</label>
+                    <input type="text" name="description" class="form-input" placeholder="Korte omschrijving">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Aanmaken</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="renameAppModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Applicatie Hernoemen</h3>
+                <span class="close-modal" onclick="closeModal('renameAppModal')">&times;</span>
+            </div>
+            <p style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--danger);">
+                <i class="fas fa-exclamation-triangle"></i> Let op: Dit hernoemt ook de collecties in de database. De API URL zal veranderen.
+            </p>
+            <form action="/manage/rename_app" method="POST">
+                <input type="hidden" name="old_app_name" id="rename_old_app_name">
+                <div class="form-group">
+                    <label class="form-label">Nieuwe Naam</label>
+                    <input type="text" name="new_app_name" class="form-input" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Hernoemen</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="renameEndpointModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Endpoint Hernoemen</h3>
+                <span class="close-modal" onclick="closeModal('renameEndpointModal')">&times;</span>
+            </div>
+            <form action="/manage/rename_endpoint" method="POST">
+                <input type="hidden" name="app_name" id="rename_ep_app_name">
+                <input type="hidden" name="old_endpoint_name" id="rename_ep_old_name">
+                <div class="form-group">
+                    <label class="form-label">Nieuwe Endpoint Naam</label>
+                    <input type="text" name="new_endpoint_name" class="form-input" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Opslaan</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Import Data</h3>
+                <span class="close-modal" onclick="closeModal('importModal')">&times;</span>
+            </div>
+            <form action="" method="POST" enctype="multipart/form-data" id="importForm">
+                <div class="form-group">
+                    <label class="form-label">Selecteer JSON bestand</label>
+                    <input type="file" name="file" class="form-input" accept=".json" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Upload & Import</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openModal(id) { document.getElementById(id).classList.add('active'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+        
+        // Sluit modals als je ernaast klikt
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.classList.remove('active');
+            }
+        }
+
+        function openRenameAppModal(appName) {
+            document.getElementById('rename_old_app_name').value = appName;
+            openModal('renameAppModal');
+        }
+
+        function openRenameEndpointModal(appName, epName) {
+            document.getElementById('rename_ep_app_name').value = appName;
+            document.getElementById('rename_ep_old_name').value = epName;
+            openModal('renameEndpointModal');
+        }
+
+        function openImportModal(appName, epName) {
+            // Zet de action van het formulier dynamisch
+            const form = document.getElementById('importForm');
+            form.action = `/manage/import/${appName}/${epName}`;
+            openModal('importModal');
+        }
+    </script>
+</body>
+</html>
+"""
 
 if __name__ == '__main__':
-    get_db_connection()
+    # Start de server
     app.run(host='0.0.0.0', port=5000, debug=True)
