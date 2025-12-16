@@ -11,36 +11,56 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f7f7f7;
+            background-color: #0d1117; /* Dark Background */
+            color: #c9d1d9; /* Light Text */
             min-height: 100vh;
         }
         .card {
-            background-color: white;
+            background-color: #161b22; /* Darker Card */
             border-radius: 0.5rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+            border: 1px solid #30363d;
         }
         .btn-primary {
-            background-color: #10b981; /* Emerald 500 */
+            background-color: #238636; /* GitHub Green */
             color: white;
             transition: background-color 0.15s;
         }
         .btn-primary:hover {
-            background-color: #059669; /* Emerald 600 */
+            background-color: #2ea043; 
         }
         .btn-danger {
-            background-color: #ef4444; /* Red 500 */
+            background-color: #da3633; /* GitHub Red */
             color: white;
             transition: background-color 0.15s;
         }
         .btn-danger:hover {
-            background-color: #dc2626; /* Red 600 */
+            background-color: #f85149; 
+        }
+        input, textarea, select {
+            background-color: #0d1117 !important;
+            border-color: #30363d !important;
+            color: #c9d1d9 !important;
+        }
+        .tab-btn {
+            padding: 0.5rem 1rem;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            border-bottom-color: #238636;
+            color: #58a6ff; /* GitHub Blue */
+            font-weight: 600;
+        }
+        .table thead th {
+            color: #8b949e; /* Gray header text */
         }
         /* Custom scrollbar for better look */
         ::-webkit-scrollbar {
             width: 8px;
         }
         ::-webkit-scrollbar-thumb {
-            background: #d1d5db;
+            background: #30363d;
             border-radius: 10px;
         }
     </style>
@@ -49,18 +69,18 @@
 
     <div id="app" class="flex-grow">
         <!-- Login Scherm -->
-        <div id="login-screen" class="min-h-screen flex items-center justify-center bg-gray-100">
+        <div id="login-screen" class="min-h-screen flex items-center justify-center bg-gray-900">
             <div class="card p-8 w-full max-w-md">
-                <h2 class="text-3xl font-bold mb-6 text-center text-gray-800">API Dashboard Login</h2>
+                <h2 class="text-3xl font-bold mb-6 text-center text-green-400">API Dashboard Login</h2>
                 <div id="login-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
                 <form id="login-form" class="space-y-4">
                     <div>
-                        <label for="username" class="block text-sm font-medium text-gray-700">Gebruikersnaam</label>
-                        <input type="text" id="username" value="admin" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-emerald-500 focus:border-emerald-500">
+                        <label for="username" class="block text-sm font-medium text-gray-400">Gebruikersnaam</label>
+                        <input type="text" id="username" value="admin" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500">
                     </div>
                     <div>
-                        <label for="password" class="block text-sm font-medium text-gray-700">Wachtwoord</label>
-                        <input type="password" id="password" value="[admin-wachtwoord]" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-emerald-500 focus:border-emerald-500">
+                        <label for="password" class="block text-sm font-medium text-gray-400">Wachtwoord</label>
+                        <input type="password" id="password" value="[admin-wachtwoord]" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500">
                     </div>
                     <button type="submit" class="btn-primary w-full py-2 px-4 rounded-md font-semibold">Inloggen</button>
                 </form>
@@ -69,12 +89,12 @@
 
         <!-- Dashboard Scherm -->
         <div id="dashboard-screen" class="hidden">
-            <header class="bg-gray-800 text-white p-4 shadow-md">
+            <header class="bg-[#161b22] text-white p-4 shadow-md border-b border-[#30363d]">
                 <div class="max-w-7xl mx-auto flex justify-between items-center">
-                    <h1 class="text-2xl font-bold">G2 API Beheerpaneel</h1>
+                    <h1 class="text-2xl font-bold text-green-400">G2 API Beheerpaneel</h1>
                     <div class="flex items-center space-x-4">
-                        <span id="user-display" class="text-sm font-medium"></span>
-                        <button id="logout-btn" class="text-sm py-1 px-3 bg-red-600 rounded hover:bg-red-700 transition">Uitloggen</button>
+                        <span id="user-display" class="text-sm font-medium text-gray-400"></span>
+                        <button id="logout-btn" class="text-sm py-1 px-3 btn-danger rounded font-medium">Uitloggen</button>
                     </div>
                 </div>
             </header>
@@ -83,62 +103,89 @@
                 
                 <!-- Statistieken Overzicht -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="card p-6 border-t-4 border-emerald-500">
-                        <p class="text-sm text-gray-500">Actieve Endpoints</p>
-                        <p id="stat-endpoints" class="text-3xl font-bold text-gray-900 mt-1">...</p>
+                    <div class="card p-6 border-l-4 border-green-500">
+                        <p class="text-sm text-gray-400">Actieve Endpoints</p>
+                        <p id="stat-endpoints" class="text-3xl font-bold text-gray-200 mt-1">...</p>
                     </div>
-                    <div class="card p-6 border-t-4 border-blue-500">
-                        <p class="text-sm text-gray-500">Geregistreerde Clients</p>
-                        <p id="stat-clients" class="text-3xl font-bold text-gray-900 mt-1">...</p>
+                    <div class="card p-6 border-l-4 border-blue-500">
+                        <p class="text-sm text-gray-400">Geregistreerde Clients</p>
+                        <p id="stat-clients" class="text-3xl font-bold text-gray-200 mt-1">...</p>
                     </div>
-                    <div class="card p-6 border-t-4 border-yellow-500">
-                        <p class="text-sm text-gray-500">Totaal API Calls</p>
-                        <p id="stat-calls" class="text-3xl font-bold text-gray-900 mt-1">...</p>
+                    <div class="card p-6 border-l-4 border-yellow-500">
+                        <p class="text-sm text-gray-400">Totaal API Calls</p>
+                        <p id="stat-calls" class="text-3xl font-bold text-gray-200 mt-1">...</p>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <!-- API Key Beheer -->
-                    <div class="card p-6 lg:col-span-2">
-                        <h3 class="text-xl font-semibold mb-4 border-b pb-2">API Sleutel Beheer</h3>
-                        <div id="settings-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
+                <!-- Tab Navigatie -->
+                <div class="flex border-b border-[#30363d] space-x-4">
+                    <button id="tab-api-keys" class="tab-btn active" data-tab="keys">API Sleutels & Beheer</button>
+                    <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Oude Collecties/Endpoints</button>
+                    <button id="tab-activity" class="tab-btn" data-tab="activity">Activiteit</button>
+                </div>
 
-                        <form id="generate-key-form" class="flex space-x-3 mb-6">
-                            <input type="text" id="new-key-desc" placeholder="Beschrijving (bijv. 'Frontend App')" required class="flex-grow px-3 py-2 border border-gray-300 rounded-md shadow-sm">
-                            <button type="submit" class="btn-primary py-2 px-4 rounded-md font-semibold">Genereer Nieuwe Sleutel</button>
-                        </form>
+                <!-- Tab Content -->
+                <div id="tab-content" class="space-y-6">
 
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-gray-200">
-                                <thead>
-                                    <tr>
-                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">Beschrijving</th>
-                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">Client ID</th>
-                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/2">API Key</th>
-                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acties</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="api-keys-table" class="bg-white divide-y divide-gray-200">
-                                    <!-- Key rijen worden hier geladen door JS -->
-                                </tbody>
-                            </table>
+                    <!-- 1. API Sleutels & Beheer (Keys Tab) -->
+                    <div id="content-keys" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="card p-6 lg:col-span-3">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Client Authenticatie Beheer</h3>
+                            <div id="settings-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
+
+                            <form id="generate-key-form" class="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3 mb-6">
+                                <input type="text" id="new-key-desc" placeholder="Beschrijving (bijv. 'Frontend App')" required class="flex-grow px-3 py-2 border border-gray-700 rounded-md shadow-sm">
+                                <button type="submit" class="btn-primary py-2 px-4 rounded-md font-semibold">Genereer Nieuwe Sleutel</button>
+                            </form>
+
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-700 table">
+                                    <thead>
+                                        <tr>
+                                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider w-1/4">Beschrijving</th>
+                                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider w-1/4">Client ID</th>
+                                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider w-1/2">API Key</th>
+                                            <th class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider">Acties</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="api-keys-table" class="bg-[#161b22] divide-y divide-gray-800">
+                                        <!-- Key rijen worden hier geladen door JS -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Activiteit en Gebruik -->
-                    <div class="card p-6 lg:col-span-1">
-                        <h3 class="text-xl font-semibold mb-4 border-b pb-2">Recente API Activiteit</h3>
-                        <ul id="activity-list" class="space-y-3 text-sm">
-                            <!-- Activiteit wordt hier geladen door JS -->
-                        </ul>
+                    <!-- 2. Oude Collecties/Endpoints (Old Endpoints Tab) -->
+                    <div id="content-old-endpoints" class="hidden">
+                        <div class="card p-6">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-yellow-500">Legacy Collecties</h3>
+                            <p class="text-sm text-gray-400 mb-4">Dit zijn de collecties die niet via de nieuwe universele structuur zijn aangemaakt. U kunt hier de data inzien en de collectienaam gebruiken in de API-tester.</p>
+
+                            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4" id="old-endpoints-list">
+                                <!-- Collecties worden hier geladen door JS -->
+                            </div>
+                        </div>
                     </div>
+
+                    <!-- 3. Activiteit (Activity Tab) -->
+                    <div id="content-activity" class="hidden">
+                        <div class="card p-6">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Recente API Activiteit</h3>
+                            <ul id="activity-list" class="space-y-3 text-sm max-h-96 overflow-y-auto pr-2">
+                                <!-- Activiteit wordt hier geladen door JS -->
+                            </ul>
+                        </div>
+                    </div>
+
                 </div>
+
             </main>
         </div>
     </div>
 
     <script>
-        // FIX: Gebruik een relatieve URL /api in plaats van de hardgecodeerde 127.0.0.1:5000
+        // FIX: Gebruik een relatieve URL /api
         const API_BASE_URL = '/api'; 
         
         // --- DOM Selectors ---
@@ -155,13 +202,14 @@
         const generateKeyForm = document.getElementById('generate-key-form');
         const settingsMessage = document.getElementById('settings-message');
         const activityList = document.getElementById('activity-list');
+        const oldEndpointsList = document.getElementById('old-endpoints-list');
 
         let currentUserId = null;
 
         // --- Hulpfuncties ---
         function showMessage(element, text, isError = false) {
             element.textContent = text;
-            element.className = `p-3 mb-4 rounded-lg text-sm ${isError ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`;
+            element.className = `p-3 mb-4 rounded-lg text-sm ${isError ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'}`;
             element.style.display = 'block';
         }
 
@@ -178,12 +226,25 @@
                 dashboardScreen.classList.add('hidden');
             }
         }
+        
+        // --- Tab Handlers ---
+        document.querySelectorAll('.tab-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const tab = button.getAttribute('data-tab');
+                // Deactiveer alle knoppen en verberg alle content
+                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('#tab-content > div').forEach(content => content.classList.add('hidden'));
 
-        async function safeFetch(path, options = {}) { // path is nu relatief aan API_BASE_URL
-            // FIX: Concateneer API_BASE_URL met het pad
+                // Activeer de geklikte knop en toon de content
+                button.classList.add('active');
+                document.getElementById(`content-${tab}`).classList.remove('hidden');
+            });
+        });
+
+        // --- Fetch Functie ---
+        async function safeFetch(path, options = {}) { 
             const url = `${API_BASE_URL}${path}`;
 
-            // Deze functie stuurt automatisch de JWT cookie mee
             options.credentials = 'include';
             options.headers = {
                 'Content-Type': 'application/json',
@@ -196,11 +257,10 @@
                 try {
                     data = await response.json();
                 } catch (e) {
-                    // Soms stuurt de API geen JSON terug (bv. bij 200/204)
+                    // Negeer: Geen JSON
                 }
 
                 if (!response.ok) {
-                    // Vang 401 Unauthorized op om de gebruiker uit te loggen
                     if (response.status === 401) {
                         handleLogout(true);
                         throw new Error("Sessie verlopen. Log opnieuw in.");
@@ -225,15 +285,14 @@
             const password = document.getElementById('password').value;
 
             try {
-                // Pad is nu /login
+                // Pad is /login
                 const response = await safeFetch('/login', {
                     method: 'POST',
                     body: JSON.stringify({ username, password })
                 });
 
-                // De succesvolle respons bevat geen data (alleen de cookie)
                 if (response && response.message) {
-                    // De browser heeft nu de HTTP-only cookie, laad het dashboard
+                    // De browser heeft nu de HTTP-only cookie
                     loadDashboard();
                 }
 
@@ -246,7 +305,6 @@
 
         async function handleLogout(isSessionExpired) {
             try {
-                // Roep de logout API aan om de cookie te wissen
                 await safeFetch('/logout', { method: 'POST' });
             } catch (e) {
                 // Negeer fouten, we gaan toch uitloggen
@@ -278,18 +336,41 @@
                 
                 // API Keys
                 renderApiKeys(settingsData.api_keys);
+                
+                // Oude Collecties
+                renderOldCollections(dashboardData.all_collections);
 
             } catch (error) {
-                // Als het laden mislukt (meestal 401), dan wordt handleLogout al aangeroepen in safeFetch
                 console.error("Dashboard laadfout:", error);
-                if (!currentUserId) { // Zorg ervoor dat we teruggaan naar login als er een echte fout is
+                if (!currentUserId) { 
                     toggleScreens(false);
-                    // Geen bericht hier, want safeFetch toont al de "Sessie verlopen" melding
                 }
             }
         }
 
         // --- Rendering Functies ---
+        
+        function renderOldCollections(collections) {
+            oldEndpointsList.innerHTML = '';
+            if (collections.length === 0) {
+                oldEndpointsList.innerHTML = '<div class="col-span-full p-4 text-center text-gray-500">Geen oude collecties gevonden. Alles is universeel!</div>';
+                return;
+            }
+
+            collections.forEach(name => {
+                const item = document.createElement('div');
+                item.className = 'card p-4 flex flex-col justify-between items-start space-y-2';
+                item.innerHTML = `
+                    <p class="text-lg font-semibold text-gray-200">${name}</p>
+                    <p class="text-xs text-gray-400">Gebruik dit pad in de API Tester.</p>
+                    <button class="text-xs text-blue-400 hover:underline" 
+                            onclick="copyToClipboardText('${name}')">
+                        Kopieer Naam
+                    </button>
+                `;
+                oldEndpointsList.appendChild(item);
+            });
+        }
 
         function renderActivity(activity) {
             activityList.innerHTML = '';
@@ -301,12 +382,12 @@
             activity.forEach(log => {
                 const date = new Date(log.timestamp).toLocaleTimeString();
                 const item = document.createElement('li');
-                item.className = 'border-b border-gray-100 pb-2';
+                item.className = 'border-b border-gray-800 pb-2';
                 item.innerHTML = `
-                    <span class="font-mono text-xs text-gray-400">${date}</span>
-                    <p class="text-gray-800">${log.action.toUpperCase()} op 
-                        <span class="font-semibold text-emerald-600">${log.endpoint}</span> 
-                        (Client: ${log.client_id})
+                    <span class="font-mono text-xs text-gray-500">${date}</span>
+                    <p class="text-gray-200">${log.action.toUpperCase()} op 
+                        <span class="font-semibold text-green-400">${log.endpoint}</span> 
+                        (Client: <span class="text-xs font-mono text-blue-400">${log.client_id}</span>)
                     </p>
                 `;
                 activityList.appendChild(item);
@@ -323,14 +404,14 @@
             
             keys.forEach(client => {
                 const row = document.createElement('tr');
-                row.className = 'hover:bg-gray-50';
+                row.className = 'hover:bg-[#1f242b]';
                 
                 row.innerHTML = `
-                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${client.description}</td>
-                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500 font-mono">${client.client_id}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-200">${client.description}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-400 font-mono">${client.client_id}</td>
                     <td class="px-3 py-2 text-sm font-mono flex items-center">
-                        <input type="text" value="${client.key}" readonly class="text-xs bg-gray-100 border-none rounded-md p-1 w-full" id="key-${client.client_id}">
-                        <button class="ml-2 text-gray-500 hover:text-gray-800" onclick="copyToClipboard('key-${client.client_id}', this)" title="Kopieer">
+                        <input type="text" value="${client.key}" readonly class="text-xs bg-gray-800 border-none rounded-md p-1 w-full text-green-400" id="key-${client.client_id}">
+                        <button class="ml-2 text-gray-500 hover:text-gray-200" onclick="copyToClipboard('key-${client.client_id}', this)" title="Kopieer">
                             <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                     </td>
@@ -342,18 +423,29 @@
             });
         }
 
-        // Global functie voor kopiëren (gebruikt in de innerHTML)
+        // Global functie voor kopiëren van input
         window.copyToClipboard = function(elementId, button) {
             const copyText = document.getElementById(elementId);
             copyText.select();
             copyText.setSelectionRange(0, 99999); 
             document.execCommand('copy');
             
-            const originalText = button.innerHTML;
-            button.innerHTML = '<span class="text-green-500">Gekopieerd!</span>';
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<svg class="w-4 h-4 text-green-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
             setTimeout(() => {
-                button.innerHTML = originalText;
+                button.innerHTML = originalHTML;
             }, 1500);
+        };
+        
+        // Global functie voor kopiëren van pure tekst (voor collectienamen)
+        window.copyToClipboardText = function(text) {
+             navigator.clipboard.writeText(text).then(() => {
+                // In een productieve omgeving zou dit een custom modal zijn in plaats van alert
+                alert(`Collectie naam '${text}' gekopieerd!`);
+            }).catch(err => {
+                console.error('Kopiëren mislukt', err);
+                alert('Kopiëren mislukt. Probeer handmatig te selecteren.');
+            });
         };
 
         // --- Key Beheer Handlers ---
@@ -365,7 +457,7 @@
             const description = document.getElementById('new-key-desc').value;
 
             try {
-                // Pad is nu /settings
+                const url = `${API_BASE_URL}/settings`;
                 const response = await safeFetch('/settings', {
                     method: 'POST',
                     body: JSON.stringify({ description })
@@ -381,14 +473,12 @@
         });
 
         window.revokeKey = async function(clientId) {
-            // Gebruik een custom modal of console log in plaats van confirm()
             if (!confirm(`Weet u zeker dat u Client ID ${clientId} wilt intrekken? Dit is onomkeerbaar!`)) {
                 return;
             }
             hideMessage(settingsMessage);
 
             try {
-                // Pad is nu /settings
                 await safeFetch('/settings', {
                     method: 'DELETE',
                     body: JSON.stringify({ client_id: clientId })
@@ -405,8 +495,7 @@
 
         // --- Initialisatie ---
 
-        // Controleer of de gebruiker al ingelogd is (door de cookie te proberen te gebruiken)
-        // We proberen het dashboard te laden; als de cookie ontbreekt/verlopen is, zal safeFetch falen en de login tonen.
+        // Controleer of de gebruiker al ingelogd is
         loadDashboard(); 
         
     </script>
