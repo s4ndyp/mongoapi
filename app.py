@@ -125,7 +125,6 @@ def check_api_key(f):
     return decorated_function
 
 # --- Rate Limiter Setup (Globale rate limit) ---
-# FIX: Pas de initialisatie aan naar het init_app patroon om de TypeError op te lossen.
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["1000 per hour", "50 per minute"]
@@ -138,6 +137,39 @@ def check_client_id_for_limit():
     if client_id:
         return False 
     return False
+
+# --- JSON Serialisatie FIX ---
+def format_mongo_doc(data):
+    """
+    FIX: Converteert MongoDB's ObjectId en datetime objecten in een document
+    (of lijst van documenten) naar JSON-serialiseerbare strings.
+    """
+    if isinstance(data, list):
+        return [format_mongo_doc(item) for item in data]
+    
+    if isinstance(data, dict):
+        new_doc = {}
+        for key, value in data.items():
+            if isinstance(value, ObjectId):
+                # Converteer ObjectId naar string
+                new_doc[key] = str(value)
+            elif isinstance(value, datetime.datetime):
+                # Converteer datetime naar ISO string
+                new_doc[key] = value.isoformat()
+            elif isinstance(value, (dict, list)):
+                # Recursief verwerken van geneste structuren
+                new_doc[key] = format_mongo_doc(value)
+            else:
+                new_doc[key] = value
+        
+        # Optioneel: hernoem _id naar id op topniveau van het document
+        if '_id' in new_doc:
+            new_doc['id'] = new_doc.pop('_id')
+        
+        return new_doc
+    
+    return data
+# --- Einde JSON Serialisatie FIX ---
 
 # --- Endpoint Logica ---
 
@@ -206,7 +238,6 @@ def serve_dashboard():
     root_dir = os.path.dirname(os.path.abspath(__file__))
     return send_from_directory(root_dir, 'dashboard.html')
 
-# U kunt ook een aparte route toevoegen als u de URL /dashboard.html wilt behouden:
 @app.route('/dashboard.html')
 def serve_dashboard_file():
     root_dir = os.path.dirname(os.path.abspath(__file__))
@@ -266,10 +297,10 @@ def data_endpoint(endpoint_path):
             if doc is None:
                 return jsonify({"error": "Document not found or access denied."}), 404
 
-            doc['id'] = str(doc['_id'])
-            del doc['_id']
+            # FIX: Gebruik de helper om het document te serialiseren
+            result = format_mongo_doc(doc)
             log_statistic("get_one", client_id, endpoint_name)
-            return jsonify({"id": doc['id'], "data": doc}), 200
+            return jsonify({"id": result['id'], "data": result}), 200
         else:
             query_params = {k: v for k, v in request.args.items() if k not in ['api_key', 'client_id']}
             
@@ -283,11 +314,8 @@ def data_endpoint(endpoint_path):
 
             docs = list(collection.find(filter_query, {'_id': 1, 'id': 1, 'data': 1, 'meta': 1}))
             
-            results = []
-            for doc in docs:
-                doc['id'] = str(doc['_id'])
-                del doc['_id']
-                results.append({"id": doc['id'], "data": doc})
+            # FIX: Gebruik de helper om de lijst van documenten te serialiseren
+            results = format_mongo_doc(docs)
 
             log_statistic("get_many", client_id, endpoint_name)
             return jsonify(results), 200
@@ -317,13 +345,13 @@ def data_endpoint(endpoint_path):
             result = collection.insert_one(new_doc)
             log_statistic("create_one", client_id, endpoint_name)
             
+            # FIX: Serialiseer het resultaat
+            serialized_doc = format_mongo_doc(new_doc)
+            serialized_doc['id'] = str(result.inserted_id)
+            
             return jsonify({
-                "id": str(result.inserted_id), 
-                "data": {
-                    "data": new_doc['data'],
-                    "meta": new_doc['meta'],
-                    "id": str(result.inserted_id)
-                }
+                "id": serialized_doc['id'], 
+                "data": serialized_doc
             }), 201
 
         except OperationFailure as e:
@@ -355,17 +383,14 @@ def data_endpoint(endpoint_path):
             
         updated_doc = collection.find_one({'_id': oid})
         
-        updated_doc['id'] = str(updated_doc['_id'])
-        del updated_doc['_id']
-        
         log_statistic("update_one", client_id, endpoint_name)
+        
+        # FIX: Serialiseer de updated document
+        serialized_doc = format_mongo_doc(updated_doc)
+        
         return jsonify({
-            "id": updated_doc['id'], 
-            "data": {
-                "data": updated_doc['data'],
-                "meta": updated_doc['meta'],
-                "id": updated_doc['id']
-            }
+            "id": serialized_doc['id'], 
+            "data": serialized_doc
         }), 200
 
     # Logica voor DELETE
@@ -454,11 +479,14 @@ def api_dashboard():
     total_endpoints = len(user_endpoints)
     total_clients = db.clients.count_documents({})
     total_calls = db.statistics.count_documents({})
+
+    # FIX: Serialiseer alle data voor de respons
+    serialized_endpoint_stats = format_mongo_doc(endpoint_stats)
+    serialized_recent_activity = format_mongo_doc(recent_activity)
     
-    def format_doc(doc):
-        # Datum format for JSON
-        doc['timestamp'] = doc['timestamp'].isoformat()
-        return doc
+    # FIX: Er was ook een probleem met ObjectId in de user documenten (niet getoond in trace, maar zeker aanwezig)
+    # Ik serialiseer de clients die in api_settings worden gebruikt ook alvast hier, om zeker te zijn:
+    # Nee, api_settings wordt direct door de frontend geladen, maar de client data is niet in de dashboard respons.
 
     return jsonify({
         'user_id': user_id,
@@ -467,9 +495,9 @@ def api_dashboard():
             'clients_count': total_clients,
             'calls_count': total_calls
         },
-        'top_endpoints': endpoint_stats,
-        'recent_activity': [format_doc(doc) for doc in recent_activity],
-        'all_collections': user_endpoints # **NIEUW: Alle user-defined collecties**
+        'top_endpoints': serialized_endpoint_stats,
+        'recent_activity': serialized_recent_activity,
+        'all_collections': user_endpoints
     })
 
 
@@ -482,12 +510,14 @@ def api_settings():
     
     if request.method == 'GET':
         api_keys = []
+        # FIX: Serialiseer de client data hier om ObjectId in _id en de datetime te fixen
         for client in db.clients.find({'user_id': user_id, 'revoked': False}):
+            client_data = format_mongo_doc(client) # Gebruik de helper
             api_keys.append({
-                'client_id': client['_id'], 
-                'key': client['key'], 
-                'description': client.get('description', 'N/A'),
-                'created_at': client['created_at'].isoformat()
+                'client_id': client_data['id'], 
+                'key': client_data['key'], 
+                'description': client_data.get('description', 'N/A'),
+                'created_at': client_data['created_at']
             })
         return jsonify({'api_keys': api_keys, 'user_id': user_id})
 
