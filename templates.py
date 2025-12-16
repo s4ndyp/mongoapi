@@ -1,7 +1,7 @@
 # templates.py
 
 # ------------------------------------------------------------------------------
-# 1. SETUP PAGINA (Nu met DB User/Pass)
+# 1. SETUP PAGINA (Alleen voor Server Verbinding)
 # ------------------------------------------------------------------------------
 SETUP_CONTENT = """
 <!DOCTYPE html>
@@ -10,6 +10,7 @@ SETUP_CONTENT = """
     <meta charset="UTF-8">
     <title>Setup - API Gateway</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { background: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; width: 100%; max-width: 450px; border: 1px solid #334155; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
@@ -22,12 +23,13 @@ SETUP_CONTENT = """
         button:hover { background: #1d4ed8; }
         .alert { background: #7f1d1d; color: #fca5a5; padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 1.5rem; font-size: 0.9rem; text-align: center; border: 1px solid #ef4444; }
         .section-header { font-size: 0.8rem; text-transform: uppercase; color: #64748b; margin-top: 1rem; margin-bottom: 0.5rem; font-weight: bold; border-bottom: 1px solid #334155; padding-bottom: 5px; }
+        .hint { font-size: 0.8rem; color: #64748b; font-style: italic; margin-bottom: 10px; display: block; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2><i class="fas fa-plug"></i> Database Setup</h2>
-        <p>Verbind de applicatie met jouw MongoDB server.<br>Deze gegevens worden lokaal opgeslagen.</p>
+        <h2><i class="fas fa-server"></i> Server Setup</h2>
+        <p>Stap 1: Verbind met de Database Server.<br>Daarna kun je inloggen.</p>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
@@ -38,21 +40,23 @@ SETUP_CONTENT = """
         {% endwith %}
 
         <form method="POST">
-            <div class="section-header">Locatie</div>
-            <label>Host (bv. localhost of IP)</label>
-            <input type="text" name="host" value="localhost" required>
+            <div class="section-header">Database Server</div>
+            <label>Host / IP Adres</label>
+            <input type="text" name="host" value="localhost" placeholder="bv. localhost of 192.168.1.50" required>
             
-            <label>Poort (Standaard: 27017)</label>
+            <label>Poort</label>
             <input type="number" name="port" value="27017" required>
 
-            <div class="section-header">Authenticatie (Optioneel)</div>
-            <label>MongoDB Username</label>
-            <input type="text" name="mongo_user" placeholder="Laat leeg indien geen auth">
+            <div class="section-header">Database Beveiliging (Optioneel)</div>
+            <span class="hint">Alleen invullen als de MongoDB server zelf een wachtwoord vereist. Anders leeg laten.</span>
             
-            <label>MongoDB Password</label>
-            <input type="password" name="mongo_pass" placeholder="Laat leeg indien geen auth">
+            <label>Mongo Username</label>
+            <input type="text" name="mongo_user" placeholder="Leeglaten voor standaard">
             
-            <button type="submit">Verbinden & Opslaan</button>
+            <label>Mongo Password</label>
+            <input type="password" name="mongo_pass" placeholder="Leeglaten voor standaard">
+            
+            <button type="submit">Opslaan & Verbinden</button>
         </form>
     </div>
 </body>
@@ -60,7 +64,7 @@ SETUP_CONTENT = """
 """
 
 # ------------------------------------------------------------------------------
-# 2. LOGIN PAGINA
+# 2. LOGIN PAGINA (Applicatie Toegang)
 # ------------------------------------------------------------------------------
 LOGIN_CONTENT = """
 <!DOCTYPE html>
@@ -69,26 +73,40 @@ LOGIN_CONTENT = """
     <meta charset="UTF-8">
     <title>Login - API Gateway</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .login-card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; width: 100%; max-width: 400px; border: 1px solid #334155; }
-        h2 { text-align: center; margin-bottom: 2rem; color: #fff; }
+        .login-card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; width: 100%; max-width: 400px; border: 1px solid #334155; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
+        h2 { text-align: center; margin-bottom: 0.5rem; color: #fff; }
+        p { text-align: center; color: #94a3b8; margin-bottom: 2rem; font-size: 0.9rem; }
         input { width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; color: #fff; border-radius: 0.5rem; margin-bottom: 1.25rem; box-sizing: border-box; }
+        input:focus { outline: none; border-color: #3b82f6; }
         button { width: 100%; padding: 0.75rem; background: #2563eb; color: white; border: none; border-radius: 0.5rem; font-weight: 600; cursor: pointer; }
-        .alert { padding: 0.75rem; margin-bottom: 1.5rem; border-radius: 0.5rem; background: #450a0a; color: #fca5a5; border: 1px solid #b91c1c; text-align: center; }
+        button:hover { background: #1d4ed8; }
+        .alert { padding: 0.75rem; margin-bottom: 1.5rem; border-radius: 0.5rem; background: #450a0a; color: #fca5a5; border: 1px solid #b91c1c; text-align: center; font-size: 0.9rem; }
+        .status-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; background: #166534; color: #86efac; margin-bottom: 1rem; }
     </style>
 </head>
 <body>
     <div class="login-card">
-        <h2>API Gateway V2</h2>
+        <div style="text-align: center;">
+            <div class="status-badge"><i class="fas fa-check-circle"></i> Database Verbonden</div>
+        </div>
+        <h2>Dashboard Login</h2>
+        <p>Voer je applicatie inloggegevens in</p>
+        
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}{% for c, m in messages %}<div class="alert">{{ m }}</div>{% endfor %}{% endif %}
         {% endwith %}
+        
         <form method="POST">
-            <input type="text" name="username" placeholder="Gebruikersnaam" required autofocus>
+            <input type="text" name="username" placeholder="Gebruikersnaam (bv. admin)" required autofocus>
             <input type="password" name="password" placeholder="Wachtwoord" required>
             <button type="submit">Inloggen</button>
         </form>
+        <div style="text-align: center; margin-top: 1rem;">
+             <a href="/setup/reset" style="color: #64748b; font-size: 0.8rem; text-decoration: none;">Database verbinding wijzigen</a>
+        </div>
     </div>
 </body>
 </html>
