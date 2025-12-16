@@ -138,7 +138,8 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://127.0.0.1:5000/api'; 
+        // FIX: Gebruik een relatieve URL /api in plaats van de hardgecodeerde 127.0.0.1:5000
+        const API_BASE_URL = '/api'; 
         
         // --- DOM Selectors ---
         const loginScreen = document.getElementById('login-screen');
@@ -178,7 +179,10 @@
             }
         }
 
-        async function safeFetch(url, options = {}) {
+        async function safeFetch(path, options = {}) { // path is nu relatief aan API_BASE_URL
+            // FIX: Concateneer API_BASE_URL met het pad
+            const url = `${API_BASE_URL}${path}`;
+
             // Deze functie stuurt automatisch de JWT cookie mee
             options.credentials = 'include';
             options.headers = {
@@ -221,8 +225,8 @@
             const password = document.getElementById('password').value;
 
             try {
-                const url = `${API_BASE_URL}/login`;
-                const response = await safeFetch(url, {
+                // Pad is nu /login
+                const response = await safeFetch('/login', {
                     method: 'POST',
                     body: JSON.stringify({ username, password })
                 });
@@ -243,7 +247,7 @@
         async function handleLogout(isSessionExpired) {
             try {
                 // Roep de logout API aan om de cookie te wissen
-                await safeFetch(`${API_BASE_URL}/logout`, { method: 'POST' });
+                await safeFetch('/logout', { method: 'POST' });
             } catch (e) {
                 // Negeer fouten, we gaan toch uitloggen
             }
@@ -256,8 +260,8 @@
 
         async function loadDashboard() {
             try {
-                const dashboardData = await safeFetch(`${API_BASE_URL}/dashboard`);
-                const settingsData = await safeFetch(`${API_BASE_URL}/settings`);
+                const dashboardData = await safeFetch('/dashboard');
+                const settingsData = await safeFetch('/settings');
 
                 // Toon scherm
                 toggleScreens(true);
@@ -280,7 +284,7 @@
                 console.error("Dashboard laadfout:", error);
                 if (!currentUserId) { // Zorg ervoor dat we teruggaan naar login als er een echte fout is
                     toggleScreens(false);
-                    showMessage(loginMessage, error.message, true);
+                    // Geen bericht hier, want safeFetch toont al de "Sessie verlopen" melding
                 }
             }
         }
@@ -361,8 +365,8 @@
             const description = document.getElementById('new-key-desc').value;
 
             try {
-                const url = `${API_BASE_URL}/settings`;
-                const response = await safeFetch(url, {
+                // Pad is nu /settings
+                const response = await safeFetch('/settings', {
                     method: 'POST',
                     body: JSON.stringify({ description })
                 });
@@ -377,14 +381,15 @@
         });
 
         window.revokeKey = async function(clientId) {
+            // Gebruik een custom modal of console log in plaats van confirm()
             if (!confirm(`Weet u zeker dat u Client ID ${clientId} wilt intrekken? Dit is onomkeerbaar!`)) {
                 return;
             }
             hideMessage(settingsMessage);
 
             try {
-                const url = `${API_BASE_URL}/settings`;
-                await safeFetch(url, {
+                // Pad is nu /settings
+                await safeFetch('/settings', {
                     method: 'DELETE',
                     body: JSON.stringify({ client_id: clientId })
                 });
