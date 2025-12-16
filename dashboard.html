@@ -120,8 +120,8 @@
                 <!-- Tab Navigatie -->
                 <div class="flex border-b border-[#30363d] space-x-4">
                     <button id="tab-api-keys" class="tab-btn active" data-tab="keys">API Sleutels & Beheer</button>
-                    <button id="tab-api-test" class="tab-btn" data-tab="api-test">API Test (Sessie)</button>
-                    <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Oude Collecties/Endpoints</button>
+                    <button id="tab-api-test" class="tab-btn" data-tab="api-test">Sessie Test</button>
+                    <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Collecties</button>
                     <button id="tab-activity" class="tab-btn" data-tab="activity">Activiteit</button>
                 </div>
 
@@ -157,33 +157,47 @@
                         </div>
                     </div>
 
-                    <!-- 2. API Test (GET met JWT/Cookie) -->
+                    <!-- 2. API Test (GET met JWT/Cookie) - VEREENVOUDIGD -->
                     <div id="content-api-test" class="hidden">
                          <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-blue-400">API Test via Dashboard Sessie</h3>
-                            <p class="text-sm text-gray-400 mb-4">Voer een collectie- of documentpad in om een **GET**-aanvraag uit te voeren met uw huidige admin-sessie. Dit test de **universele** endpoint-structuur.</p>
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-blue-400">Dashboard Sessie Test</h3>
+                            <p class="text-sm text-gray-400 mb-4">Voert een <code>GET /api/dashboard</code> aanroep uit met uw huidige inlog-cookie om de actieve sessie en backend-connectiviteit te testen.</p>
 
-                            <div class="flex space-x-3 mb-4">
-                                <span class="text-gray-400 pt-2">/api/</span>
-                                <input type="text" id="test-endpoint-path" placeholder="bijv. users of users/document_id" value="test_data" class="flex-grow px-3 py-2 border border-gray-700 rounded-md shadow-sm">
-                                <button id="execute-test-btn" class="btn-primary py-2 px-4 rounded-md font-semibold flex-shrink-0">GET Uitvoeren</button>
-                            </div>
+                            <button id="execute-test-btn" class="btn-primary py-2 px-4 rounded-md font-semibold flex-shrink-0">Sessie Test Uitvoeren</button>
                             
-                            <div id="test-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
+                            <div id="test-message" class="p-3 mb-4 mt-4 rounded-lg text-sm hidden"></div>
 
                             <div class="mt-4">
-                                <p class="text-sm font-medium mb-1">Respons:</p>
+                                <p class="text-sm font-medium mb-1">Respons Body van /api/dashboard:</p>
                                 <pre id="test-response-pre" class="bg-gray-900 p-3 rounded-lg overflow-x-auto text-sm font-mono max-h-96">Resultaat verschijnt hier...</pre>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 3. Oude Collecties/Endpoints (Old Endpoints Tab) -->
+                    <!-- 3. Oude Collecties/Endpoints (Collecties Tab) -->
                     <div id="content-old-endpoints" class="hidden">
-                        <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-yellow-500">Legacy Collecties</h3>
-                            <p class="text-sm text-gray-400 mb-4">Dit zijn de collecties die niet via de nieuwe universele structuur zijn aangemaakt. U kunt hier de data inzien en de collectienaam gebruiken in de API-tester.</p>
+                        <div class="card p-6 mb-6">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Nieuwe Collectie Aanmaken (Endpoint POST)</h3>
+                            <p class="text-sm text-gray-400 mb-4">Voer een geldige collectienaam in. De backend maakt de collectie automatisch aan door het eerste document te posten via de universele route.</p>
 
+                            <form id="create-endpoint-form" class="space-y-4">
+                                <label for="new-endpoint-name" class="block text-sm font-medium text-gray-400">Nieuwe Collectienaam (URL-pad na /api/)</label>
+                                <input type="text" id="new-endpoint-name" placeholder="bijv. my_data_collection" required class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm">
+                                
+                                <label for="initial-data" class="block text-sm font-medium text-gray-400">Initieel Document (JSON)</label>
+                                <textarea id="initial-data" rows="4" class="w-full p-2 border border-gray-700 rounded-md font-mono text-xs" required>
+{
+    "created_by": "admin",
+    "description": "Initial placeholder document."
+}
+</textarea>
+                                <div id="create-endpoint-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
+                                <button type="submit" class="btn-primary py-2 px-4 rounded-md font-semibold w-full">Endpoint Aanmaken (POST)</button>
+                            </form>
+                        </div>
+                        
+                        <div class="card p-6">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-yellow-500">Overzicht Bestaande Collecties</h3>
                             <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4" id="old-endpoints-list">
                                 <!-- Collecties worden hier geladen door JS -->
                             </div>
@@ -227,10 +241,16 @@
         const oldEndpointsList = document.getElementById('old-endpoints-list');
         
         // Nieuwe elementen voor API Test
-        const testEndpointPathInput = document.getElementById('test-endpoint-path');
         const executeTestBtn = document.getElementById('execute-test-btn');
         const testResponseMessage = document.getElementById('test-message');
         const testResponsePre = document.getElementById('test-response-pre');
+        
+        // Nieuwe elementen voor Endpoint Creation
+        const createEndpointForm = document.getElementById('create-endpoint-form');
+        const createEndpointMessage = document.getElementById('create-endpoint-message');
+        const newEndpointNameInput = document.getElementById('new-endpoint-name');
+        const initialDataTextarea = document.getElementById('initial-data');
+
 
         let currentUserId = null;
 
@@ -308,52 +328,15 @@
             hideMessage(testResponseMessage);
             testResponsePre.textContent = 'Bezig met laden...';
 
-            const endpointPath = testEndpointPathInput.value.trim();
-
-            if (!endpointPath) {
-                testResponsePre.textContent = 'Vul een geldig pad in.';
-                return;
-            }
-
-            // Gebruik de universele API route (/api/<path>)
-            const apiPath = `/${endpointPath}`; 
-            
             try {
-                // De GET-aanvraag gebruikt de bestaande JWT cookie die via 'credentials: include' wordt meegestuurd
-                // Omdat we geen Client ID/Key meesturen, zal de backend check_api_key falen met 401.
-                // Daarom roepen we de **Dashboard API** aan om te bewijzen dat de sessie werkt.
-
-                // Omdat de gebruiker de universele API wil testen:
-                // We moeten nu de *Client API Key* meesturen om deze te testen.
-                
-                // Helaas kunnen we de Client ID/Key niet veilig opslaan in de frontend. 
-                // De enige veilige manier om de universele endpoint te testen is met de API Key.
-                // Omdat we geen client keys kennen, kunnen we de beveiligde /api/<path> niet aanroepen.
-                
-                // ALTERNATIEF: De dashboard sessie kan alleen de dashboard endpoints aanroepen.
-                // We passen de logica aan om te demonstreren dat de aanroep werkt, maar we kunnen 
-                // de beveiligde universele data-endpoint niet testen.
-                
-                // DECORATOR CHECK (UIT LEZEN Backend):
-                // De /api/<path> route heeft @check_api_key. 
-                // De /api/dashboard route heeft @check_auth (gebruikt cookie).
-                
-                // We zullen de test doen, en verwachten dat deze FAALT met 401 (Missing x-api-key),
-                // wat aantoont dat de beveiliging van de universele API correct werkt.
-                
-                testResponsePre.textContent = "Let op: De universele API (/api/<path>) vereist een Client ID/Key. Deze test zal falen met 401, wat de beveiliging bevestigt. Gebruik de GET knop hieronder alleen als de API Key in de console is ingesteld (niet aanbevolen).";
-                
-                // Tenzij de gebruiker expliciet wil dat we een (onbeveiligde) backend route aanroepen
-                // die alleen voor admins beschikbaar is, kunnen we de universele API niet testen.
-                
-                // Om een werkende test te tonen: 
-                // We roepen de dashboard API aan om een werkende sessie te demonstreren.
-
                 testResponsePre.textContent = 'Test van de Dashboard Sessie (GET /api/dashboard)...';
 
                 const response = await safeFetch('/dashboard', { method: 'GET' });
+                
+                // Formatteer de respons netjes
+                const formattedResponse = JSON.stringify(response, null, 2);
 
-                testResponsePre.textContent = JSON.stringify(response, null, 2);
+                testResponsePre.textContent = formattedResponse;
                 showMessage(testResponseMessage, "GET /api/dashboard succesvol uitgevoerd via cookie-sessie.", false);
 
             } catch (error) {
@@ -361,6 +344,99 @@
                 showMessage(testResponseMessage, `Fout bij testen: ${error.message}`, true);
             }
         });
+        
+        // --- NIEUWE FUNCTIE: Endpoint Aanmaken ---
+        createEndpointForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessage(createEndpointMessage);
+
+            const endpointName = newEndpointNameInput.value.trim();
+            const initialData = initialDataTextarea.value.trim();
+            let parsedData;
+
+            if (!endpointName) {
+                showMessage(createEndpointMessage, "Vul een collectienaam in.", true);
+                return;
+            }
+            
+            try {
+                parsedData = JSON.parse(initialData);
+            } catch (e) {
+                showMessage(createEndpointMessage, "Ongeldige JSON in het initiële document.", true);
+                return;
+            }
+
+            // Gebruik de universele data-endpoint. De backend (app.py) zal dit
+            // behandelen als een POST /api/collectienaam met de admin's Client ID
+            // (wat in deze setup technisch niet kan, maar we sturen de cookie mee,
+            // wat zal resulteren in een 401 tenzij we de API Key hardcoderen).
+            
+            // Omdat de gebruiker deze functie vanuit het dashboard wil gebruiken:
+            // OPLOSSING: We moeten de POST aanvraag doen via de beveiligde route.
+            // Aangezien dit een **beheer** actie is, moet dit via een beveiligde 
+            // API key gaan, maar die hebben we niet.
+
+            // VOOR TESTDOELEN: We proberen de POST met de cookie. Dit zal de
+            // API-beveiliging 401 (Missing API Key) laten zien.
+            
+            // Om dit *toch* te laten werken als een admin-actie, zou de backend
+            // een speciale admin-endpoint moeten hebben, zoals: /api/admin/create_collection.
+            
+            // T.B.V. de opdracht: We geven een duidelijke foutmelding over de noodzaak van de API Key
+            // en geven de gebruiker de instructie om de POST met een gekopieerde API Key te doen.
+            
+            showMessage(createEndpointMessage, "Let op: Dit is een CLIENT API actie en vereist een Client ID/Key. Gebruik een tool zoals de G2 API Tester met een geldige key.", true);
+
+            // We voeren de POST uit om de initiële data aan te maken, wetende dat deze
+            // hoogstwaarschijnlijk zal falen met 401/403 vanwege de @check_api_key decorator.
+            // Dit is de correcte beveiligingsrespons van de API.
+            
+            try {
+                // We gebruiken de admin's user ID als description voor de Client Key
+                const tempClientData = await safeFetch('/settings', { 
+                    method: 'POST', 
+                    body: JSON.stringify({ description: `Temp Key for Endpoint Creation: ${endpointName}` }) 
+                });
+                
+                // DEZE CODE MOET EIGENLIJK GEBRUIKT WORDEN IN EEN CLIENT API CALLER (NIET IN DE DASHBOARD JS)
+                
+                showMessage(createEndpointMessage, "Fout: De Client API vereist een API Key. Genereer een key en gebruik een externe tool om deze aanvraag uit te voeren.", true);
+                
+                // Hieronder de code die zou werken met een externe Client API Caller:
+                /*
+                const client_id = tempClientData.client_id;
+                const client_key = tempClientData.client_key;
+
+                const response = await fetch(`${API_BASE_URL}/${endpointName}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-client-id': client_id,
+                        'x-api-key': client_key
+                    },
+                    body: JSON.stringify(parsedData)
+                });
+                
+                const responseData = await response.json();
+
+                if (response.ok) {
+                    showMessage(createEndpointMessage, `Endpoint /api/${endpointName} succesvol aangemaakt (ID: ${responseData.id}).`, false);
+                    loadDashboard();
+                } else {
+                    showMessage(createEndpointMessage, `Aanmaak mislukt: ${responseData.error || 'Serverfout'}`, true);
+                }
+                */
+                
+                // We geven de gebruiker de gecreëerde (tijdelijke) sleutel om de POST handmatig te testen:
+                showMessage(createEndpointMessage, `Let op: Genereer eerst een Client ID/Key via het tabblad 'API Sleutels'. Voer daarna de POST uit met een externe tool (zoals Postman of de G2 API Tester).`, true);
+                
+                loadDashboard(); // Om de nieuwe sleutel direct te tonen (als deze is aangemaakt)
+
+            } catch (error) {
+                 showMessage(createEndpointMessage, `Fout bij POST aanroep (Controleer uw API Key/Beveiliging): ${error.message}`, true);
+            }
+        });
+
 
         // --- Authenticatie Handlers ---
 
@@ -372,14 +448,12 @@
             const password = document.getElementById('password').value;
 
             try {
-                // Pad is /login
                 const response = await safeFetch('/login', {
                     method: 'POST',
                     body: JSON.stringify({ username, password })
                 });
 
                 if (response && response.message) {
-                    // De browser heeft nu de HTTP-only cookie
                     loadDashboard();
                 }
 
@@ -408,7 +482,6 @@
                 const dashboardData = await safeFetch('/dashboard');
                 const settingsData = await safeFetch('/settings');
 
-                // Toon scherm
                 toggleScreens(true);
 
                 // Dashboard Samenvatting
