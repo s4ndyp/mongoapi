@@ -202,7 +202,7 @@ def serve_dashboard():
     """
     Serveert het statische dashboard.html bestand vanaf de root URL.
     """
-    # De directory is de map waarin app_universal.py draait.
+    # De directory is de map waarin app.py draait.
     root_dir = os.path.dirname(os.path.abspath(__file__))
     return send_from_directory(root_dir, 'dashboard.html')
 
@@ -432,22 +432,31 @@ def api_dashboard():
     g = globals()
     user_id = g['user_id']
     
+    # Haal Top 10 statistieken op
     pipeline = [
         {'$group': {'_id': '$endpoint', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
         {'$limit': 10}
     ]
-    
     endpoint_stats = list(db.statistics.aggregate(pipeline))
     
+    # Haal recente activiteit op
     recent_activity = list(db.statistics.find().sort('timestamp', -1).limit(20))
     
+    # Haal alle collecties op
     collection_names = db.list_collection_names()
-    total_endpoints = len([name for name in collection_names if name not in ['users', 'clients', 'statistics', 'system.indexes']])
+    
+    # Definieer de systeem/interne collecties
+    system_collections = ['users', 'clients', 'statistics', 'system.indexes']
+    
+    # Bereken het aantal actieve (user) endpoints
+    user_endpoints = [name for name in collection_names if name not in system_collections]
+    total_endpoints = len(user_endpoints)
     total_clients = db.clients.count_documents({})
     total_calls = db.statistics.count_documents({})
     
     def format_doc(doc):
+        # Datum format for JSON
         doc['timestamp'] = doc['timestamp'].isoformat()
         return doc
 
@@ -459,7 +468,8 @@ def api_dashboard():
             'calls_count': total_calls
         },
         'top_endpoints': endpoint_stats,
-        'recent_activity': [format_doc(doc) for doc in recent_activity]
+        'recent_activity': [format_doc(doc) for doc in recent_activity],
+        'all_collections': user_endpoints # **NIEUW: Alle user-defined collecties**
     })
 
 
