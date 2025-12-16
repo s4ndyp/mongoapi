@@ -450,6 +450,73 @@ def api_logout():
     resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, samesite='Lax')
     return resp
 
+# --- NIEUW: Profiel wijzigen (Wachtwoord/Gebruikersnaam) ---
+@app.route('/api/admin/profile', methods=['GET', 'POST'])
+@check_auth
+def api_admin_profile():
+    db = get_db()
+    g = globals()
+    user_id = g['user_id']
+    
+    if request.method == 'GET':
+        # Haal de huidige admin info op (alleen username, geen wachtwoord hash!)
+        user = db.users.find_one({'username': user_id}, {'_id': 0, 'username': 1, 'role': 1})
+        if user:
+            return jsonify(user)
+        return jsonify({'error': 'Gebruiker niet gevonden.'}), 404
+
+    elif request.method == 'POST':
+        data = request.get_json()
+        new_username = data.get('new_username')
+        old_password = data.get('old_password')
+        new_password = data.get('new_password')
+        
+        user_doc = db.users.find_one({'username': user_id})
+
+        if not user_doc or not check_password(old_password, user_doc['password']):
+            return jsonify({'error': 'Huidig wachtwoord is onjuist.'}), 401
+
+        update_set = {}
+        
+        # 1. Update Wachtwoord
+        if new_password:
+            if len(new_password) < 8:
+                return jsonify({'error': 'Nieuw wachtwoord moet minimaal 8 tekens bevatten.'}), 400
+            update_set['password'] = hash_password(new_password)
+
+        # 2. Update Gebruikersnaam
+        if new_username and new_username != user_id:
+            if db.users.find_one({'username': new_username}):
+                return jsonify({'error': f'Gebruikersnaam "{new_username}" is al in gebruik.'}), 400
+            
+            update_set['username'] = new_username
+            
+        if not update_set:
+            return jsonify({'message': 'Geen wijzigingen aangebracht.'})
+            
+        # Voer de update uit
+        db.users.update_one({'username': user_id}, {'$set': update_set})
+        
+        # Als de gebruikersnaam is gewijzigd, moet de JWT worden vernieuwd
+        if 'username' in update_set:
+            new_token = generate_jwt(new_username)
+            resp = make_response(jsonify({'message': 'Profiel en gebruikersnaam succesvol bijgewerkt. Nieuwe login vereist.', 'new_username': new_username}), 200)
+            # Wis de oude cookie
+            resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, samesite='Lax')
+            # Zet de nieuwe cookie
+            resp.set_cookie(
+                app.config['JWT_COOKIE_NAME'], 
+                new_token, 
+                httponly=True, 
+                secure=app.config.get('ENV') == 'production',
+                samesite='Lax',
+                max_age=app.config['JWT_EXPIRY_MINUTES'] * 60
+            )
+            return resp
+        
+        return jsonify({'message': 'Profiel succesvol bijgewerkt.'})
+
+
 # --- NIEUW: Scan Endpoints op Weesdata ---
 @app.route('/api/collections/scan', methods=['GET'])
 @check_auth
@@ -494,7 +561,6 @@ def api_collections_scan():
 def api_collections_convert():
     """
     Update alle weesdocumenten in een gespecificeerde collectie met de opgegeven Client ID.
-    Dit is een beheerdersactie, beveiligd door JWT.
     """
     db = get_db()
     if db is None: return jsonify({"error": "Database connection error"}), 503
@@ -581,9 +647,11 @@ def api_dashboard():
     serialized_endpoint_stats = format_mongo_doc(endpoint_stats)
     serialized_recent_activity = format_mongo_doc(recent_activity)
     
-    # NIEUW: Collectie statistieken worden nu via /api/collections/scan geladen
-    # Dit voorkomt een trage load voor het dashboard zelf
+    # NIEUW: Haal de lijst van clients op voor de frontend selector (de keys zijn hier niet nodig)
+    clients = list(db.clients.find({'user_id': user_id, 'revoked': False}, {'_id': 1, 'description': 1}))
     
+    serialized_clients = format_mongo_doc(clients)
+
     return jsonify({
         'user_id': user_id,
         'summary': {
@@ -593,7 +661,8 @@ def api_dashboard():
         },
         'top_endpoints': serialized_endpoint_stats,
         'recent_activity': serialized_recent_activity,
-        'all_collections': user_endpoints # Nu alleen de namen
+        'all_collections': user_endpoints,
+        'available_clients_meta': serialized_clients # Alleen ID en beschrijving
     })
 
 
