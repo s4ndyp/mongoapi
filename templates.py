@@ -1,694 +1,410 @@
 # templates.py
 
+# ------------------------------------------------------------------------------
+# 1. LOGIN PAGINA (Nieuwe donkere stijl)
+# ------------------------------------------------------------------------------
 LOGIN_CONTENT = """
-    <div class="row justify-content-center pt-5">
-        <div class="col-md-6 col-lg-4">
-            <div class="card p-4 shadow-lg">
-                <h3 class="card-title text-center mb-4 text-white"><i class="bi bi-lock-fill"></i> Dashboard Login</h3>
-                {% with messages = get_flashed_messages(with_categories=true) %}
-                  {% if messages %}
-                    {% for category, message in messages %}
-                      <div class="alert alert-{{ category }}">{{ message | safe }}</div>
-                    {% endfor %}
-                  {% endif %}
-                {% endwith %}
-                <form method="POST" action="{{ url_for('dashboard_login') }}">
-                    <div class="mb-3">
-                        <label for="username" class="form-label text-muted">Gebruikersnaam</label>
-                        <input type="text" name="username" id="username" class="form-control bg-dark text-white" required autofocus>
-                    </div>
-                    <div class="mb-4">
-                        <label for="password" class="form-label text-muted">Wachtwoord</label>
-                        <input type="password" name="password" id="password" class="form-control bg-dark text-white" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100">Log In</button>
-                </form>
-            </div>
-        </div>
-    </div>
-"""
-
-BASE_LAYOUT = """
 <!DOCTYPE html>
-<html lang="nl" data-bs-theme="dark">
+<html lang="nl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Gateway V2.3</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <title>Login - API Gateway</title>
     <style>
-        body { background-color: #121212; color: #e0e0e0; }
-        .card { background-color: #1e1e1e; border: 1px solid #333; margin-bottom: 20px; }
-        .sidebar { min-height: 100vh; background-color: #191919; border-right: 1px solid #333; }
-        .nav-link { color: #aaa; }
-        .nav-link:hover, .nav-link.active { color: #fff; background-color: #333; border-radius: 5px; }
-        .status-dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
-        .dot-green { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
-        .dot-red { background-color: #dc3545; box-shadow: 0 0 5px #dc3545; }
-        .log-timestamp { font-family: monospace; color: #88c0d0; }
-        .fixed-top { position: fixed; top: 0; }
-        .jwt-input-fix {
-             width: 100%;
-             word-wrap: break-word; 
-             min-width: 0; 
-             height: auto; 
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
         }
-        .tag-pill {
-            font-size: 0.75rem;
-            padding: 3px 10px;
-            border-radius: 12px;
-            margin-right: 4px;
-            text-decoration: none;
-            display: inline-block;
-            font-weight: 600;
+        .login-card {
+            background-color: #1e293b;
+            padding: 2.5rem;
+            border-radius: 1rem;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            border: 1px solid #334155;
+        }
+        h2 { text-align: center; margin-bottom: 2rem; color: #fff; }
+        .form-group { margin-bottom: 1.5rem; }
+        label { display: block; margin-bottom: 0.5rem; font-size: 0.9rem; color: #94a3b8; }
+        input {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #0f172a;
+            border: 1px solid #334155;
             color: #fff;
-            text-shadow: 0px 1px 2px rgba(0,0,0,0.3);
-            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 0.5rem;
+            box-sizing: border-box;
         }
-        .tag-pill:hover { opacity: 0.9; color: #fff !important; }
-        .tag-pill.active { border: 2px solid #fff; box-shadow: 0 0 8px rgba(255,255,255,0.5); }
-        
-        .endpoint-row {
-            transition: background-color 0.2s;
-            border-left: 1px solid #333; 
+        input:focus { outline: none; border-color: #2563eb; }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
         }
-        .endpoint-row:hover {
-            background-color: #2c2c2c;
+        button:hover { background-color: #1d4ed8; }
+        .alert {
+            padding: 0.75rem;
+            margin-bottom: 1.5rem;
+            border-radius: 0.5rem;
+            font-size: 0.9rem;
+            background-color: #fef2f2;
+            color: #ef4444;
+            border: 1px solid #fecaca;
+            text-align: center;
         }
-        
-        {% if page == 'login' %}
-        .container-fluid { height: 100vh; display: flex; align-items: center; justify-content: center; }
-        {% endif %}
     </style>
 </head>
 <body>
-    <div id="dashboard-notification" class="alert alert-success d-none fixed-top mt-3 mx-auto shadow-lg" 
-        style="width: 300px; z-index: 1050; text-align: center;"></div>
-
-    <div class="container-fluid">
-        <div class="row w-100">
-            {% if page != 'login' %}
-            <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse p-3">
-                <h4 class="mb-4 text-white"><i class="bi bi-hdd-network"></i> Gateway</h4>
-                <ul class="nav flex-column mb-4">
-                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'dashboard' else '' }}" href="/"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'endpoints' else '' }}" href="/endpoints"><i class="bi bi-list-ul"></i> Endpoints</a></li>
-                    <li class="nav-item"><a class="nav-link {{ 'active' if page == 'settings' else '' }}" href="/settings"><i class="bi bi-gear"></i> Instellingen</a></li>
-                </ul>
-
-                {% if all_tags %}
-                <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-2 text-muted text-uppercase">
-                  <span>Filter op Tag</span>
-                </h6>
-                <div class="px-3">
-                    <a href="/endpoints" class="tag-pill mb-2 d-inline-block {{ 'active' if not request.args.get('tag') }}" style="background-color: #6c757d;">Alle</a>
-                    {% for tag in all_tags %}
-                        <a href="{{ url_for('endpoints_page', tag=tag, sort=request.args.get('sort')) }}" 
-                           class="tag-pill mb-2 d-inline-block {{ 'active' if request.args.get('tag') == tag }}"
-                           style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">
-                           {{ tag }}
-                        </a>
-                    {% endfor %}
-                </div>
-                {% endif %}
-
-                <div class="mt-auto pt-4 border-top border-secondary small text-muted">
-                    Ingelogd als: <strong class="text-white">{{ session.get('username', 'Gast') }}</strong>
-                    <div class="mt-2">
-                        <a href="{{ url_for('dashboard_logout') }}" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-box-arrow-right"></i> Uitloggen</a>
-                    </div>
-                    <div class="mt-4">Versie 3.2 (Sorting)</div>
-                </div>
-            </nav>
-            {% endif %}
-            
-            <main class="{{ 'col-12' if page == 'login' else 'col-md-9 ms-sm-auto col-lg-10' }} px-md-4 py-4">
-                {% if page != 'login' %}
-                {% with messages = get_flashed_messages(with_categories=true) %}
-                  {% if messages %}
-                    {% for category, message in messages %}
-                      <div class="alert alert-{{ category }} alert-dismissible fade show">{{ message | safe }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
-                    {% endfor %}
-                  {% endif %}
-                {% endwith %}
-                {% endif %}
-                {{ page_content | safe }}
-            </main>
-        </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-        function showNotification(message, type = 'success') {
-            const notif = document.getElementById('dashboard-notification');
-            if (!notif) return;
-            notif.className = `alert alert-${type} fixed-top mt-3 mx-auto shadow-lg`;
-            notif.style.display = 'block';
-            notif.innerHTML = message;
-            setTimeout(() => { notif.style.display = 'none'; }, 3000);
-        }
-
-        function copyKey(elementId) {
-            const inputElement = document.getElementById(elementId);
-            if (!inputElement) return;
-            inputElement.select();
-            inputElement.setSelectionRange(0, 99999); 
-            try {
-                const successful = document.execCommand('copy');
-                if (successful) showNotification('Gekopieerd!', 'success');
-                else showNotification('Kopiëren mislukt.', 'danger');
-            } catch (err) { showNotification('Kopiëren mislukt.', 'danger'); }
-        }
+    <div class="login-card">
+        <h2>API Gateway</h2>
         
-        document.addEventListener("DOMContentLoaded", function() {
-            document.querySelectorAll('.utc-timestamp').forEach(element => {
-                const utcTime = element.dataset.utc;
-                if (utcTime) {
-                    const date = new Date(utcTime + 'Z'); 
-                    if (!isNaN(date)) {
-                        element.textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-                    }
-                }
-            });
-            const jwtCopyButton = document.getElementById('jwt-copy-button');
-            if (jwtCopyButton) {
-                jwtCopyButton.addEventListener('click', () => { copyKey('jwt-token-input'); });
-            }
-        });
-    </script>
-    {% if page == 'dashboard' %}
-    <script>
-        const chartData = JSON.parse(document.getElementById('chart-data').textContent);
-        const ctx = document.getElementById('activityChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: chartData.labels,
-                datasets: [{
-                    label: 'Requests',
-                    data: chartData.counts,
-                    backgroundColor: 'rgba(13, 110, 253, 0.6)',
-                    borderColor: '#0d6efd', borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: { y: { beginAtZero: true, grid: { color: '#333' } }, x: { grid: { color: '#333' } } }
-            }
-        });
-    </script>
-    {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+            <div class="form-group">
+                <label>Gebruikersnaam</label>
+                <input type="text" name="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>Wachtwoord</label>
+                <input type="password" name="password" required>
+            </div>
+            <button type="submit">Inloggen</button>
+        </form>
+    </div>
 </body>
 </html>
 """
 
+# ------------------------------------------------------------------------------
+# 2. DASHBOARD (De volledige applicatie UI)
+# ------------------------------------------------------------------------------
+# Dit bevat de Sidebar, Modals, en Javascript logic.
 DASHBOARD_CONTENT = """
-    <h2 class="mb-4">Systeem Overzicht</h2>
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="card p-3">
-                <h5 class="text-muted">Status</h5>
-                <div class="d-flex align-items-center mt-2">
-                    {% if db_connected %}
-                        <span class="status-dot dot-green"></span> <h4 class="m-0">Online</h4>
-                    {% else %}
-                        <span class="status-dot dot-red"></span> <h4 class="m-0">Offline</h4>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card p-3">
-                <h5 class="text-muted">Requests (24u)</h5>
-                <h3 class="mt-2">{{ stats_count }}</h3>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card p-3">
-                <h5 class="text-muted">Actieve Clients</h5>
-                <h3 class="mt-2">{{ client_count }}</h3>
-            </div>
-        </div>
-         <div class="col-md-3">
-            <div class="card p-3 border-info">
-                <h5 class="text-info">Totale Opslag</h5>
-                <h3 class="mt-2">{{ total_storage }}</h3>
-            </div>
-        </div>
-    </div>
-    
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card p-3 border-warning">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="text-warning m-0"><i class="bi bi-person-fill-lock"></i> Mislukte Login Pogingen</h5>
-                    <div class="dropdown">
-                        <button class="btn btn-sm btn-warning dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                            {{ login_range_label }}
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-dark">
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range=time_range, login_range='24h') }}">Laatste 24 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range=time_range, login_range='7d') }}">Laatste 7 Dagen</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range=time_range, login_range='30d') }}">Laatste 30 Dagen</a></li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <ul class="list-group list-group-flush">
-                    {% for client, count in failed_logins.items() %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <span class="text-muted font-monospace">{{ client }}</span>
-                        <span class="badge bg-danger">{{ count }}</span>
-                    </li>
-                    {% else %}
-                    <li class="list-group-item bg-transparent text-muted">Geen mislukte login pogingen in deze periode.</li>
-                    {% endfor %}
-                </ul>
-            </div>
-        </div>
-    </div>
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Gateway Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --background-color: #0f172a; /* Dark theme base */
+            --sidebar-bg: #1e293b;
+            --sidebar-text: #94a3b8;
+            --sidebar-active: #fff;
+            --card-bg: #1e293b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border-color: #334155;
+            --success: #22c55e;
+            --danger: #ef4444;
+        }
 
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card p-3">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="m-0">Activiteit</h5>
-                    <div class="dropdown">
-                        <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                            {{ current_range_label }}
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-dark">
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='6h', login_range=login_range) }}">Laatste 6 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='24h', login_range=login_range) }}">Laatste 24 Uur</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='7d', login_range=login_range) }}">Laatste Week</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='30d', login_range=login_range) }}">Laatste Maand</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('dashboard', range='365d', login_range=login_range) }}">Laatste Jaar</a></li>
-                        </ul>
-                    </div>
-                </div>
-                <script id="chart-data" type="application/json">{{ chart_data | tojson | safe }}</script>
-                <canvas id="activityChart" height="100"></canvas>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card p-3">
-                <h5 class="card-title">Top Clients (24u)</h5>
-                <ul class="list-group list-group-flush mt-3">
-                    {% for client in clients %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <a href="{{ url_for('client_detail', source_app=client) }}" class="text-info text-decoration-none">{{ client }}</a>
-                        <span class="badge bg-primary">Actief</span>
-                    </li>
-                    {% else %}
-                    <li class="list-group-item bg-transparent text-muted">Geen verkeer</li>
-                    {% endfor %}
-                </ul>
-            </div>
-        </div>
-    </div>
-"""
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: var(--background-color); color: var(--text-primary); display: flex; height: 100vh; overflow: hidden; }
 
-ENDPOINTS_CONTENT = """
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h2>Endpoints Beheer</h2>
-            {% if active_filter %}
-                <span class="tag-pill active" style="background-color: {{ tag_map.get(active_filter, '#6c757d') }}">Gefilterd op: {{ active_filter }}</span>
-                <a href="{{ url_for('endpoints_page', sort=current_sort) }}" class="btn btn-sm btn-outline-secondary ms-2">Reset Filter</a>
-            {% endif %}
+        /* Sidebar */
+        .sidebar { width: 280px; background: var(--sidebar-bg); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; padding: 1.5rem; transition: all 0.3s ease; }
+        .sidebar-header { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); }
+        .logo { font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.75rem; }
+        
+        .nav-section { margin-bottom: 2rem; }
+        .nav-title { text-transform: uppercase; font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.75rem; letter-spacing: 0.05em; }
+        .nav-item { display: flex; align-items: center; padding: 0.75rem 1rem; color: var(--sidebar-text); text-decoration: none; border-radius: 0.5rem; transition: all 0.2s; margin-bottom: 0.25rem; }
+        .nav-item:hover, .nav-item.active { background: #334155; color: var(--sidebar-active); }
+        .nav-item i { width: 20px; margin-right: 0.75rem; }
+
+        /* Main Content */
+        .main-content { flex: 1; overflow-y: auto; padding: 2rem; background: var(--background-color); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+        
+        .header-left h1 { font-size: 1.8rem; font-weight: 600; color: var(--text-primary); }
+        .header-left p { color: var(--text-secondary); margin-top: 0.25rem; }
+        .app-title-wrapper { display: flex; align-items: center; gap: 10px; }
+        .edit-icon { color: var(--text-secondary); cursor: pointer; font-size: 0.9rem; transition: 0.2s; }
+        .edit-icon:hover { color: var(--primary-color); }
+
+        .btn { padding: 0.6rem 1.2rem; border-radius: 0.5rem; border: none; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem; transition: all 0.2s; text-decoration: none; font-size: 0.9rem; }
+        .btn-primary { background: var(--primary-color); color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+        .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); }
+        .btn-ghost:hover { background: #334155; color: var(--text-primary); }
+
+        /* Grid & Cards */
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem; }
+        .card { background: var(--card-bg); border-radius: 1rem; padding: 1.5rem; border: 1px solid var(--border-color); transition: transform 0.2s; }
+        .card:hover { transform: translateY(-2px); border-color: #475569; }
+        
+        .card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem; }
+        .method-badge { background: #1e3a8a; color: #93c5fd; padding: 0.25rem 0.6rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600; }
+        .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; color: #f8fafc; }
+        .card-path { font-family: 'Monaco', 'Consolas', monospace; font-size: 0.85rem; color: #cbd5e1; background: #0f172a; padding: 0.4rem 0.6rem; border-radius: 0.25rem; word-break: break-all; border: 1px solid var(--border-color); }
+        
+        .stat-row { display: flex; gap: 1.5rem; margin: 1rem 0; padding: 1rem 0; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+        .stat-item { display: flex; flex-direction: column; }
+        .stat-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; }
+        .stat-value { font-weight: 600; color: var(--text-primary); }
+
+        .card-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+
+        /* Forms & Modals */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+        .modal.active { display: flex; }
+        .modal-content { background: var(--card-bg); padding: 2rem; border-radius: 1rem; width: 100%; max-width: 500px; border: 1px solid var(--border-color); color: var(--text-primary); }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 1.5rem; }
+        .modal-title { font-size: 1.25rem; font-weight: 600; }
+        .close-modal { cursor: pointer; font-size: 1.5rem; color: var(--text-secondary); }
+        
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; font-size: 0.9rem; color: var(--text-secondary); }
+        .form-input { width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid var(--border-color); border-radius: 0.5rem; font-family: inherit; color: white; transition: border-color 0.2s; }
+        .form-input:focus { outline: none; border-color: var(--primary-color); }
+
+        .flash-messages { margin-bottom: 1.5rem; }
+        .alert { padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem; font-size: 0.9rem; }
+        .alert-error { background: rgba(239, 68, 68, 0.1); color: #fca5a5; border: 1px solid #7f1d1d; }
+        .alert-success { background: rgba(34, 197, 94, 0.1); color: #86efac; border: 1px solid #14532d; }
+        
+        .logout-btn { margin-top: auto; color: #ef4444 !important; }
+        .logout-btn:hover { background: rgba(239, 68, 68, 0.1) !important; }
+    </style>
+</head>
+<body>
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-network-wired"></i>
+                <span>API Gateway</span>
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Overzicht</div>
+            <a href="/" class="nav-item {{ 'active' if not selected_app else '' }}">
+                <i class="fas fa-th-large"></i> Alles
+            </a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Applicaties</div>
+            {% for app in apps %}
+            <a href="/?app={{ app }}" class="nav-item {{ 'active' if selected_app == app else '' }}">
+                <i class="fas fa-layer-group"></i> {{ app }}
+            </a>
+            {% endfor %}
         </div>
         
-        <div class="d-flex gap-2">
-            <div class="dropdown">
-                <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                    <i class="bi bi-sort-down"></i> Sorteer: {{ 'Op Tag' if current_sort == 'tag' else 'Alfabetisch' }}
-                </button>
-                <ul class="dropdown-menu dropdown-menu-dark shadow">
-                    <li>
-                        <a class="dropdown-item {{ 'active' if current_sort == 'alpha' }}" 
-                           href="{{ url_for('endpoints_page', sort='alpha', tag=active_filter) }}">
-                           <i class="bi bi-sort-alpha-down"></i> Alfabetisch (A-Z)
-                        </a>
-                    </li>
-                    <li>
-                        <a class="dropdown-item {{ 'active' if current_sort == 'tag' }}" 
-                           href="{{ url_for('endpoints_page', sort='tag', tag=active_filter) }}">
-                           <i class="bi bi-tags"></i> Op Tag
-                        </a>
-                    </li>
-                </ul>
-            </div>
+        <a href="/logout" class="nav-item logout-btn">
+            <i class="fas fa-sign-out-alt"></i> Uitloggen
+        </a>
+    </aside>
 
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
-                <i class="bi bi-plus-lg"></i> Nieuw Endpoint
+    <main class="main-content">
+        
+        <div class="header">
+            <div class="header-left">
+                <div class="app-title-wrapper">
+                    <h1>{% if selected_app %}{{ selected_app }}{% else %}Alle Endpoints{% endif %}</h1>
+                    {% if selected_app %}
+                    <i class="fas fa-pencil-alt edit-icon" onclick="openRenameAppModal('{{ selected_app }}')" title="Applicatie hernoemen"></i>
+                    {% endif %}
+                </div>
+                <p>Beheer API connecties en data</p>
+            </div>
+            <button class="btn btn-primary" onclick="openModal('addEndpointModal')">
+                <i class="fas fa-plus"></i> Nieuw Endpoint
             </button>
         </div>
-    </div>
 
-    <div class="d-none d-md-flex text-muted small text-uppercase px-3 mb-2">
-        <div style="width: 250px;">Endpoint / Badges</div>
-        <div class="flex-grow-1"></div>
-        <div class="text-end" style="width: 120px;">Records</div>
-        <div class="text-end" style="width: 120px;">Opslag</div>
-        <div class="text-end" style="width: 150px;">Acties</div>
-    </div>
+        <div class="flash-messages">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                {% for category, message in messages %}
+                  <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+        </div>
 
-    <div class="d-flex flex-column gap-2">
-        {% for ep in endpoints %}
-        <div class="card endpoint-row border-0 mb-0">
-            <div class="card-body py-2 d-flex align-items-center flex-wrap gap-2">
+        <div class="grid-container">
+            {% for ep in endpoints %}
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fas fa-database" style="color: var(--primary-color);"></i>
+                        {{ ep.endpoint_name }}
+                    </div>
+                    <span class="method-badge">REST</span>
+                </div>
                 
-                <div class="d-flex align-items-center flex-grow-1 gap-3" style="min-width: 300px;">
-                    <h5 class="m-0 font-monospace text-white text-nowrap" style="width: 180px;">
-                        <a href="#" class="text-decoration-none text-white" 
-                           onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}'); return false;">
-                           /api/{{ ep.name }}
-                        </a>
-                        {% if ep.system %}<i class="bi bi-shield-lock-fill small ms-1 text-muted" title="Systeem Endpoint"></i>{% endif %}
-                    </h5>
-                    
-                    <div class="d-flex flex-wrap">
-                        {% for tag in ep.tags %}
-                            <span class="tag-pill" style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">{{ tag }}</span>
-                        {% endfor %}
+                <div class="card-path">/api/{{ ep.app_name }}/{{ ep.endpoint_name }}</div>
+                
+                <div class="stat-row">
+                    <div class="stat-item">
+                        <span class="stat-label">Records</span>
+                        <span class="stat-value">{{ ep.doc_count }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Datum</span>
+                        <span class="stat-value">{{ ep.created_at.strftime('%d-%m-%Y') if ep.created_at else '-' }}</span>
                     </div>
                 </div>
 
-                <div class="text-end text-muted d-flex align-items-center justify-content-end" style="width: 120px;">
-                    <span class="d-md-none me-2 small">Records:</span>
-                    <span class="fs-6">{{ ep.stats.count }}</span>
-                </div>
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    {{ ep.description }}
+                </p>
 
-                <div class="text-end text-warning d-flex align-items-center justify-content-end" style="width: 120px;">
-                    <span class="d-md-none me-2 small text-muted">Opslag:</span>
-                    <span class="fs-6">{{ ep.stats.size }}</span>
-                </div>
-
-                <div class="d-flex gap-1 justify-content-end align-items-center" style="width: 150px;">
-                    <form method="POST" action="/endpoints/clear_data" onsubmit="return confirm('WEET U HET ZEKER? Dit verwijdert ALLE {{ ep.stats.count }} records in {{ ep.name }}.');" class="m-0">
-                        <input type="hidden" name="name" value="{{ ep.name }}">
-                        <button type="submit" class="btn btn-sm btn-outline-warning" title="Maak endpoint leeg">
-                            <i class="bi bi-eraser"></i>
+                <div class="card-actions">
+                    <a href="/manage/export/{{ ep.app_name }}/{{ ep.endpoint_name }}" class="btn btn-ghost btn-sm" title="Backup downloaden">
+                        <i class="fas fa-download"></i>
+                    </a>
+                    <button class="btn btn-ghost btn-sm" onclick="openImportModal('{{ ep.app_name }}', '{{ ep.endpoint_name }}')" title="Data importeren">
+                        <i class="fas fa-upload"></i>
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="openRenameEndpointModal('{{ ep.app_name }}', '{{ ep.endpoint_name }}')" title="Wijzigen">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <form action="/manage/delete" method="POST" onsubmit="return confirm('LET OP: Dit verwijdert het endpoint én alle data definitief!');" style="display:inline;">
+                        <input type="hidden" name="app_name" value="{{ ep.app_name }}">
+                        <input type="hidden" name="endpoint_name" value="{{ ep.endpoint_name }}">
+                        <button type="submit" class="btn btn-ghost btn-sm" style="color: var(--danger);" title="Verwijderen">
+                            <i class="fas fa-trash-alt"></i>
                         </button>
                     </form>
+                </div>
+            </div>
+            {% else %}
+            <div style="grid-column: 1/-1; text-align: center; padding: 4rem; color: var(--text-secondary);">
+                <i class="fas fa-cubes" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.2;"></i>
+                <p>Geen endpoints gevonden.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </main>
 
-                    {% if not ep.system %}
-                    <button class="btn btn-sm btn-outline-secondary" 
-                            onclick="openEditModal('{{ ep.name }}', '{{ ep.description | replace("'", "") | replace('"', "") }}', '{{ ep.tags | join(',') }}')" title="Bewerken">
-                        <i class="bi bi-pencil"></i>
-                    </button>
-                    <form method="POST" action="/endpoints/delete" onsubmit="return confirm('LET OP: Dit verwijdert het endpoint {{ ep.name }} EN alle data. Doorgaan?');" class="m-0">
-                        <input type="hidden" name="name" value="{{ ep.name }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Verwijder Endpoint"><i class="bi bi-trash"></i></button>
-                    </form>
-                    {% endif %}
+    <div id="addEndpointModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Nieuw Endpoint</h3>
+                <span class="close-modal" onclick="closeModal('addEndpointModal')">&times;</span>
+            </div>
+            <form action="/manage/add" method="POST">
+                <div class="form-group">
+                    <label class="form-label">Applicatie (Map)</label>
+                    <input type="text" name="app_name" class="form-input" placeholder="bv. KlantenApp" value="{{ selected_app if selected_app else '' }}" required>
                 </div>
-            </div>
-            {% if ep.description %}
-            <div class="card-footer py-1 bg-transparent border-0">
-                 <small class="text-muted fst-italic ms-1">{{ ep.description }}</small>
-            </div>
-            {% endif %}
+                <div class="form-group">
+                    <label class="form-label">Endpoint Naam</label>
+                    <input type="text" name="endpoint_name" class="form-input" placeholder="bv. data" value="data" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Beschrijving</label>
+                    <input type="text" name="description" class="form-input" placeholder="Optioneel">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Aanmaken</button>
+            </form>
         </div>
-        {% else %}
-        <div class="text-center text-muted py-5">
-            <h4>Geen endpoints gevonden.</h4>
-        </div>
-        {% endfor %}
     </div>
 
-    <div class="modal fade" id="addEndpointModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content bg-dark text-white border-secondary">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title">Endpoint Toevoegen</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form method="POST" action="/endpoints">
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Naam (URL pad)</label>
-                            <div class="input-group">
-                                <span class="input-group-text bg-secondary text-white">/api/</span>
-                                <input type="text" name="name" class="form-control bg-black text-white" required pattern="[a-zA-Z0-9_]+" placeholder="products">
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Omschrijving</label>
-                            <input type="text" name="description" class="form-control bg-black text-white">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Tags</label>
-                            <input type="text" name="tags" class="form-control bg-black text-white" placeholder="bv. extern, beta">
-                        </div>
-                    </div>
-                    <div class="modal-footer border-secondary">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuleren</button>
-                        <button type="submit" class="btn btn-primary">Aanmaken</button>
-                    </div>
-                </form>
+    <div id="renameAppModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Applicatie Hernoemen</h3>
+                <span class="close-modal" onclick="closeModal('renameAppModal')">&times;</span>
             </div>
+            <p style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--danger);">
+                <i class="fas fa-exclamation-triangle"></i> Let op: Dit verandert de URL paden en hernoemt de database collecties.
+            </p>
+            <form action="/manage/rename_app" method="POST">
+                <input type="hidden" name="old_app_name" id="rename_old_app_name">
+                <div class="form-group">
+                    <label class="form-label">Nieuwe Naam</label>
+                    <input type="text" name="new_app_name" class="form-input" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Opslaan</button>
+            </form>
         </div>
     </div>
-    
-    <div class="modal fade" id="editEndpointModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content bg-dark text-white border-secondary">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title">Endpoint Bewerken</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form method="POST" action="/endpoints/update">
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Naam</label>
-                            <input type="text" id="edit-name-display" class="form-control bg-secondary text-white" disabled>
-                            <input type="hidden" name="name" id="edit-name-input">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Omschrijving</label>
-                            <input type="text" name="description" id="edit-desc-input" class="form-control bg-black text-white">
-                        </div>
-                        <div class="mb-3">
-                             <label class="form-label">Tags</label>
-                             <input type="text" name="tags" id="edit-tags-input" class="form-control bg-black text-white">
-                        </div>
-                    </div>
-                    <div class="modal-footer border-secondary">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuleren</button>
-                        <button type="submit" class="btn btn-primary">Opslaan</button>
-                    </div>
-                </form>
+
+    <div id="renameEndpointModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Endpoint Hernoemen</h3>
+                <span class="close-modal" onclick="closeModal('renameEndpointModal')">&times;</span>
             </div>
+            <form action="/manage/rename_endpoint" method="POST">
+                <input type="hidden" name="app_name" id="rename_ep_app_name">
+                <input type="hidden" name="old_endpoint_name" id="rename_ep_old_name">
+                <div class="form-group">
+                    <label class="form-label">Nieuwe Endpoint Naam</label>
+                    <input type="text" name="new_endpoint_name" class="form-input" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Opslaan</button>
+            </form>
         </div>
     </div>
-    
+
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Importeer Data</h3>
+                <span class="close-modal" onclick="closeModal('importModal')">&times;</span>
+            </div>
+            <form action="" method="POST" enctype="multipart/form-data" id="importForm">
+                <div class="form-group">
+                    <label class="form-label">JSON Bestand</label>
+                    <input type="file" name="file" class="form-input" accept=".json" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Uploaden</button>
+            </form>
+        </div>
+    </div>
+
     <script>
-    function openEditModal(name, desc, tags) {
-        document.getElementById('edit-name-display').value = name;
-        document.getElementById('edit-name-input').value = name;
-        document.getElementById('edit-desc-input').value = desc;
-        document.getElementById('edit-tags-input').value = tags;
-        var myModal = new bootstrap.Modal(document.getElementById('editEndpointModal'));
-        myModal.show();
-    }
+        function openModal(id) { document.getElementById(id).classList.add('active'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+        window.onclick = function(e) { if(e.target.classList.contains('modal')) e.target.classList.remove('active'); }
+
+        function openRenameAppModal(name) {
+            document.getElementById('rename_old_app_name').value = name;
+            openModal('renameAppModal');
+        }
+        function openRenameEndpointModal(app, ep) {
+            document.getElementById('rename_ep_app_name').value = app;
+            document.getElementById('rename_ep_old_name').value = ep;
+            openModal('renameEndpointModal');
+        }
+        function openImportModal(app, ep) {
+            document.getElementById('importForm').action = `/manage/import/${app}/${ep}`;
+            openModal('importModal');
+        }
     </script>
-"""
-
-CLIENT_DETAIL_CONTENT = """
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Client: <span class="text-info">{{ source_app }}</span></h2>
-        <a href="/" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Terug</a>
-    </div>
-    
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="card p-3">
-                <h5 class="text-muted">Requests (Laatste 24u)</h5>
-                <h3 class="mt-2 text-primary">{{ total_requests }}</h3>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card p-3">
-                <h5 class="text-muted">Authenticatie</h5>
-                <div class="mt-2">
-                    {% if is_user %}
-                        <span class="badge bg-primary fs-5"><i class="bi bi-person-fill"></i> Logged in User (JWT)</span>
-                    {% elif has_key %}
-                        <span class="badge bg-success fs-5"><i class="bi bi-key-fill"></i> API Key Actief</span>
-                    {% else %}
-                        <span class="badge bg-danger fs-5"><i class="bi bi-exclamation-triangle-fill"></i> Geen Key</span>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="card p-4">
-        <h5 class="card-title mb-3">Laatste 20 Logregels</h5>
-        <table class="table table-dark table-striped table-hover">
-            <thead>
-                <tr>
-                    <th>Tijd (Lokaal)</th>
-                    <th>Actie</th>
-                    <th>Endpoint</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for log in logs %}
-                <tr>
-                    <td class="utc-timestamp log-timestamp" data-utc="{{ log.timestamp }}"></td>
-                    <td>{{ log.action }}</td>
-                    <td><span class="badge bg-secondary">{{ log.endpoint }}</span></td>
-                </tr>
-                {% else %}
-                <tr><td colspan="3" class="text-center text-muted">Geen logs.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-"""
-
-SETTINGS_CONTENT = """
-    <h2>Instellingen</h2>
-    
-    <div class="row mt-4 mb-4">
-        <div class="col-12">
-            <div class="card p-4 border-primary">
-                <h4 class="text-primary mb-3"><i class="bi bi-tags"></i> Tag Beheer</h4>
-                <p class="text-muted small">Beheer hier de kleuren en namen van de tags. Wijzigingen worden direct overal toegepast.</p>
-                
-                <div class="table-responsive">
-                    <table class="table table-dark table-hover align-middle">
-                        <thead>
-                            <tr>
-                                <th style="width: 200px;">Huidige Tag</th>
-                                <th>Kleur Instelling</th>
-                                <th>Naam Wijzigen (Hernoemen)</th>
-                                <th class="text-end">Actie</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for tag in all_tags %}
-                            <tr>
-                                <form method="POST" action="/settings/tags/update">
-                                    <input type="hidden" name="original_name" value="{{ tag }}">
-                                    <td>
-                                        <span class="tag-pill" style="background-color: {{ tag_map.get(tag, '#0d6efd') }};">{{ tag }}</span>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-center">
-                                            <input type="color" name="color" class="form-control form-control-color bg-dark border-secondary me-2" 
-                                                   value="{{ tag_map.get(tag, '#0d6efd') }}" title="Kies kleur">
-                                            <span class="text-muted small font-monospace">{{ tag_map.get(tag, '#0d6efd') }}</span>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <input type="text" name="new_name" class="form-control bg-black text-white" value="{{ tag }}">
-                                    </td>
-                                    <td class="text-end">
-                                        <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Opslaan</button>
-                                    </td>
-                                </form>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="4" class="text-center text-muted">Nog geen tags in gebruik.</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="row">
-        <div class="col-md-6">
-            <div class="card p-4">
-                <h5>Nieuwe Gebruiker Aanmaken</h5>
-                <form method="POST" action="/settings">
-                    <div class="mb-3">
-                        <label class="form-label text-muted">Naam</label>
-                        <input type="text" name="username" class="form-control bg-dark text-white" placeholder="Gebruikersnaam" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label text-muted">Wachtwoord</label>
-                        <input type="password" name="password" class="form-control bg-dark text-white" placeholder="Wachtwoord" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label text-muted">Token Geldigheid</label>
-                        <select name="token_validity_minutes" class="form-select bg-dark text-white">
-                            <option value="1440" selected>24 uur</option>
-                            <option value="10080">7 dagen</option>
-                            <option value="44640">31 dagen</option>
-                            <option value="525600">365 dagen</option>
-                        </select>
-                        <div class="form-text text-muted small">Dit geldt voor het eerste token én toekomstige logins.</div>
-                    </div>
-                    <button type="submit" name="action" value="create_user" class="btn btn-success">Gebruiker Toevoegen</button>
-                </form>
-            </div>
-            
-            <div class="card p-4 mt-3">
-                 <h5>Database Connection</h5>
-                 <form method="POST" action="/settings">
-                    <div class="mb-3">
-                        <input type="text" name="mongo_uri" class="form-control bg-dark text-white" value="{{ current_uri }}">
-                    </div>
-                    <button type="submit" name="action" value="save_uri" class="btn btn-primary">Opslaan & Testen</button>
-                 </form>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card p-4 mb-3">
-                <h5>Actieve Gebruikers (JWT)</h5>
-                <ul class="list-group list-group-flush">
-                    {% for user in active_users %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between">
-                        <div>
-                            {{ user.username }} 
-                            <small class="text-muted d-block" style="font-size: 0.8em">
-                                Sinds: <span class="utc-timestamp" data-utc="{{ user.created_at.isoformat() }}"></span><br>
-                                Token duur: {{ (user.validity / 60) | int }} uur
-                            </small>
-                        </div>
-                        <form method="POST" action="/settings" onsubmit="return confirm('Gebruiker \'{{ user.username }}\' verwijderen? Dit verbreekt alle actieve JWTs van deze gebruiker!');">
-                            <input type="hidden" name="action" value="delete_user">
-                            <input type="hidden" name="username" value="{{ user.username }}">
-                            <button class="btn btn-sm btn-danger ms-2">X</button>
-                        </form>
-                    </li>
-                    {% else %}
-                    <li class="list-group-item bg-transparent text-muted">Geen gebruikers gevonden.</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            <div class="card p-4">
-                <h5>Actieve API Sleutels (Legacy)</h5>
-                <ul class="list-group list-group-flush">
-                    {% for id, data in api_keys.items() %}
-                    <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-start">
-                        <div class="me-3 flex-grow-1">
-                            <div>{{ data.description }} <small class="text-muted">({{ id }})</small></div>
-                            <div class="input-group input-group-sm mt-1">
-                                <input type="text" class="form-control bg-dark text-warning small font-monospace" readonly 
-                                    value="{{ data.key }}" id="key-{{ id }}">
-                                <button type="button" class="btn btn-outline-info" 
-                                        onclick="copyKey('key-{{ id }}')" title="Kopieer Key">
-                                    <i class="bi bi-clipboard"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <form method="POST" action="/settings" onsubmit="return confirm('Intrekken?');">
-                            <input type="hidden" name="action" value="revoke_key">
-                            <input type="hidden" name="client_id" value="{{ id }}">
-                            <button class="btn btn-sm btn-danger ms-2" title="Trek in">X</button>
-                        </form>
-                    </li>
-                    {% endfor %}
-                </ul>
-            </div>
-        </div>
-    </div>
+</body>
+</html>
 """
