@@ -178,11 +178,19 @@
                     <div id="content-old-endpoints" class="hidden">
                         <div class="card p-6 mb-6">
                             <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Nieuwe Collectie Aanmaken (Endpoint POST)</h3>
-                            <p class="text-sm text-gray-400 mb-4">Voer een geldige collectienaam in. De backend maakt de collectie automatisch aan door het eerste document te posten via de universele route.</p>
+                            <p class="text-sm text-gray-400 mb-4">Om een nieuwe collectie aan te maken via de universele route, dient u een Client ID en de bijbehorende API Key te gebruiken (die u aanmaakt op het tabblad 'API Sleutels & Beheer').</p>
 
                             <form id="create-endpoint-form" class="space-y-4">
+                                <div id="key-selection-container">
+                                    <label for="post-client-id" class="block text-sm font-medium text-gray-400">Selecteer Client ID (voor autorisatie)</label>
+                                    <select id="post-client-id" class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm" required>
+                                        <option value="">-- Selecteer een Client ID --</option>
+                                    </select>
+                                    <div id="selected-client-key" class="mt-2 p-2 bg-[#0d1117] border border-gray-700 rounded text-xs font-mono hidden"></div>
+                                </div>
+                                
                                 <label for="new-endpoint-name" class="block text-sm font-medium text-gray-400">Nieuwe Collectienaam (URL-pad na /api/)</label>
-                                <input type="text" id="new-endpoint-name" placeholder="bijv. my_data_collection" required class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm">
+                                <input type="text" id="new-endpoint-name" placeholder="bijv. my_new_endpoint" required class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm">
                                 
                                 <label for="initial-data" class="block text-sm font-medium text-gray-400">Initieel Document (JSON)</label>
                                 <textarea id="initial-data" rows="4" class="w-full p-2 border border-gray-700 rounded-md font-mono text-xs" required>
@@ -250,9 +258,12 @@
         const createEndpointMessage = document.getElementById('create-endpoint-message');
         const newEndpointNameInput = document.getElementById('new-endpoint-name');
         const initialDataTextarea = document.getElementById('initial-data');
+        const postClientIdSelect = document.getElementById('post-client-id');
+        const selectedClientKeyDiv = document.getElementById('selected-client-key');
 
 
         let currentUserId = null;
+        let activeClientKeys = []; // Array om keys lokaal op te slaan
 
         // --- Hulpfuncties ---
         function showMessage(element, text, isError = false) {
@@ -346,14 +357,31 @@
         });
         
         // --- NIEUWE FUNCTIE: Endpoint Aanmaken ---
+        postClientIdSelect.addEventListener('change', () => {
+            const clientId = postClientIdSelect.value;
+            const client = activeClientKeys.find(k => k.client_id === clientId);
+            if (client) {
+                selectedClientKeyDiv.textContent = `Key: ${client.key}`;
+                selectedClientKeyDiv.classList.remove('hidden');
+            } else {
+                selectedClientKeyDiv.textContent = '';
+                selectedClientKeyDiv.classList.add('hidden');
+            }
+        });
+
         createEndpointForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             hideMessage(createEndpointMessage);
 
             const endpointName = newEndpointNameInput.value.trim();
             const initialData = initialDataTextarea.value.trim();
+            const clientId = postClientIdSelect.value;
             let parsedData;
 
+            if (!clientId) {
+                showMessage(createEndpointMessage, "Selecteer een geldig Client ID voor autorisatie.", true);
+                return;
+            }
             if (!endpointName) {
                 showMessage(createEndpointMessage, "Vul een collectienaam in.", true);
                 return;
@@ -365,54 +393,23 @@
                 showMessage(createEndpointMessage, "Ongeldige JSON in het initiële document.", true);
                 return;
             }
+            
+            const client = activeClientKeys.find(k => k.client_id === clientId);
+            if (!client) {
+                showMessage(createEndpointMessage, "Geselecteerde Client ID niet gevonden. Herlaad het dashboard.", true);
+                return;
+            }
 
-            // Gebruik de universele data-endpoint. De backend (app.py) zal dit
-            // behandelen als een POST /api/collectienaam met de admin's Client ID
-            // (wat in deze setup technisch niet kan, maar we sturen de cookie mee,
-            // wat zal resulteren in een 401 tenzij we de API Key hardcoderen).
-            
-            // Omdat de gebruiker deze functie vanuit het dashboard wil gebruiken:
-            // OPLOSSING: We moeten de POST aanvraag doen via de beveiligde route.
-            // Aangezien dit een **beheer** actie is, moet dit via een beveiligde 
-            // API key gaan, maar die hebben we niet.
-
-            // VOOR TESTDOELEN: We proberen de POST met de cookie. Dit zal de
-            // API-beveiliging 401 (Missing API Key) laten zien.
-            
-            // Om dit *toch* te laten werken als een admin-actie, zou de backend
-            // een speciale admin-endpoint moeten hebben, zoals: /api/admin/create_collection.
-            
-            // T.B.V. de opdracht: We geven een duidelijke foutmelding over de noodzaak van de API Key
-            // en geven de gebruiker de instructie om de POST met een gekopieerde API Key te doen.
-            
-            showMessage(createEndpointMessage, "Let op: Dit is een CLIENT API actie en vereist een Client ID/Key. Gebruik een tool zoals de G2 API Tester met een geldige key.", true);
-
-            // We voeren de POST uit om de initiële data aan te maken, wetende dat deze
-            // hoogstwaarschijnlijk zal falen met 401/403 vanwege de @check_api_key decorator.
-            // Dit is de correcte beveiligingsrespons van de API.
+            // Nu voeren we de POST uit met de API Key headers
+            const url = `${API_BASE_URL}/${endpointName}`;
             
             try {
-                // We gebruiken de admin's user ID als description voor de Client Key
-                const tempClientData = await safeFetch('/settings', { 
-                    method: 'POST', 
-                    body: JSON.stringify({ description: `Temp Key for Endpoint Creation: ${endpointName}` }) 
-                });
-                
-                // DEZE CODE MOET EIGENLIJK GEBRUIKT WORDEN IN EEN CLIENT API CALLER (NIET IN DE DASHBOARD JS)
-                
-                showMessage(createEndpointMessage, "Fout: De Client API vereist een API Key. Genereer een key en gebruik een externe tool om deze aanvraag uit te voeren.", true);
-                
-                // Hieronder de code die zou werken met een externe Client API Caller:
-                /*
-                const client_id = tempClientData.client_id;
-                const client_key = tempClientData.client_key;
-
-                const response = await fetch(`${API_BASE_URL}/${endpointName}`, {
+                const response = await fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-client-id': client_id,
-                        'x-api-key': client_key
+                        'x-client-id': client.client_id,
+                        'x-api-key': client.key
                     },
                     body: JSON.stringify(parsedData)
                 });
@@ -421,19 +418,14 @@
 
                 if (response.ok) {
                     showMessage(createEndpointMessage, `Endpoint /api/${endpointName} succesvol aangemaakt (ID: ${responseData.id}).`, false);
-                    loadDashboard();
+                    newEndpointNameInput.value = '';
+                    initialDataTextarea.value = JSON.stringify({ "created_by": "admin", "description": "Another placeholder document." }, null, 4);
+                    loadDashboard(); // Herlaad om nieuwe endpoint in de lijst te tonen
                 } else {
-                    showMessage(createEndpointMessage, `Aanmaak mislukt: ${responseData.error || 'Serverfout'}`, true);
+                    showMessage(createEndpointMessage, `Aanmaak mislukt (Status ${response.status}): ${responseData.error || 'Serverfout'}`, true);
                 }
-                */
-                
-                // We geven de gebruiker de gecreëerde (tijdelijke) sleutel om de POST handmatig te testen:
-                showMessage(createEndpointMessage, `Let op: Genereer eerst een Client ID/Key via het tabblad 'API Sleutels'. Voer daarna de POST uit met een externe tool (zoals Postman of de G2 API Tester).`, true);
-                
-                loadDashboard(); // Om de nieuwe sleutel direct te tonen (als deze is aangemaakt)
-
             } catch (error) {
-                 showMessage(createEndpointMessage, `Fout bij POST aanroep (Controleer uw API Key/Beveiliging): ${error.message}`, true);
+                 showMessage(createEndpointMessage, `Netwerkfout bij POST aanroep: ${error.message}`, true);
             }
         });
 
@@ -484,6 +476,9 @@
 
                 toggleScreens(true);
 
+                // Keys opslaan voor gebruik in POST formulier
+                activeClientKeys = settingsData.api_keys; 
+
                 // Dashboard Samenvatting
                 currentUserId = dashboardData.user_id;
                 userDisplay.textContent = `Ingelogd als: ${dashboardData.user_id}`;
@@ -496,6 +491,9 @@
                 
                 // API Keys
                 renderApiKeys(settingsData.api_keys);
+                
+                // Client ID Selector voor POST
+                populateClientKeySelector(settingsData.api_keys);
                 
                 // Oude Collecties
                 renderOldCollections(dashboardData.all_collections);
@@ -510,6 +508,18 @@
 
         // --- Rendering Functies ---
         
+        function populateClientKeySelector(keys) {
+            postClientIdSelect.innerHTML = '<option value="">-- Selecteer een Client ID --</option>';
+            keys.forEach(client => {
+                const option = document.createElement('option');
+                option.value = client.client_id;
+                option.textContent = `${client.client_id} (${client.description})`;
+                postClientIdSelect.appendChild(option);
+            });
+            selectedClientKeyDiv.textContent = '';
+            selectedClientKeyDiv.classList.add('hidden');
+        }
+
         function renderOldCollections(collections) {
             oldEndpointsList.innerHTML = '';
             if (collections.length === 0) {
