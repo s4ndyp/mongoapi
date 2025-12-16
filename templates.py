@@ -1,15 +1,14 @@
 # templates.py
 
 # ------------------------------------------------------------------------------
-# 1. BASE LAYOUT & Setup Content (Gewijzigd)
+# 1. BASE LAYOUT & Setup Content (Gewijzigd: | safe filter toegevoegd)
 # ------------------------------------------------------------------------------
-# We houden het simpel voor de dashboard view
 BASE_LAYOUT = """
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-    <meta charset="UTF-8">
     <title>{{ title }} - API Gateway V2</title>
+    <meta charset="UTF-8">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -64,6 +63,11 @@ BASE_LAYOUT = """
         th, td { padding: 1rem 1.5rem; text-align: left; border-bottom: 1px solid var(--border); }
         th { color: var(--text-muted); font-weight: 500; font-size: 0.85rem; text-transform: uppercase; background: #182236; }
         tr:hover { background: #243046; }
+        
+        /* Modal Fix */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+        .modal.active { display: flex; }
+        .modal-content { background: var(--card); padding: 2rem; border-radius: 1rem; border: 1px solid var(--border); }
 
     </style>
 </head>
@@ -73,7 +77,7 @@ BASE_LAYOUT = """
         <div class="logo"><i class="fas fa-network-wired"></i> API Gateway V2</div>
         
         <div class="section-title">Menu</div>
-        <a href="/" class="nav-item {{ 'active' if active_page == 'dashboard' else '' }}">
+        <a href="/dashboard" class="nav-item {{ 'active' if active_page == 'dashboard' else '' }}">
             <i class="fas fa-chart-line"></i> Dashboard
         </a>
         <a href="/endpoints" class="nav-item {{ 'active' if active_page == 'endpoints' else '' }}">
@@ -102,7 +106,7 @@ BASE_LAYOUT = """
           {% endif %}
         {% endwith %}
 
-        {{ content }}
+        {{ content | safe }}
     </main>
 
     <div id="addUserModal" class="modal">
@@ -168,219 +172,13 @@ BASE_LAYOUT = """
 </html>
 """
 
-# ------------------------------------------------------------------------------
-# 2. DASHBOARD PAGINA'S
-# ------------------------------------------------------------------------------
+# De andere CONTENT variabelen zijn nu in de app.py geplakt.
+
 DASHBOARD_CONTENT = """
 <div class="header">
     <h1>Systeem Status</h1>
     <span class="badge badge-blue">Host: {{ db_host }}</span>
 </div>
-
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-label">Database Status <div class="status-dot {{ 'status-online' if db_status else 'status-offline' }}"></div></div>
-        <div class="stat-value">{{ 'Verbonden' if db_status else 'Fout' }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Totale Opslag <i class="fas fa-hdd"></i></div>
-        <div class="stat-value">{{ db_storage }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Mislukte Logins (24u) <i class="fas fa-shield-alt"></i></div>
-        <div class="stat-value" style="color: #ef4444;">{{ failed_logins }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Totaal Endpoints <i class="fas fa-layer-group"></i></div>
-        <div class="stat-value">{{ total_endpoints }}</div>
-    </div>
-</div>
-
-<div class="card-panel">
-    <div class="panel-header">
-        <span class="panel-title">Activiteit (Afgelopen 7 dagen)</span>
-    </div>
-    <div style="padding: 1rem; height: 300px;">
-        <canvas id="activityChart"></canvas>
-    </div>
-</div>
-
-<script>
-    const ctx = document.getElementById('activityChart').getContext('2d');
-    new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: {{ chart_labels | safe }},
-            datasets: [{
-                label: 'Requests',
-                data: {{ chart_data | safe }},
-                backgroundColor: '#3b82f6',
-                borderRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-                x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
-            },
-            plugins: { legend: { display: false } }
-        }
-    });
-</script>
+...
 """
-
-ENDPOINTS_CONTENT = """
-<div class="header">
-    <h1>Endpoints Data</h1>
-    <button class="btn btn-primary" onclick="openModal('addEndpointModal')"><i class="fas fa-plus"></i> Nieuw</button>
-</div>
-
-<div class="stats-grid">
-    {% for ep in endpoints %}
-    <div class="stat-card">
-        <div class="stat-label" style="margin-bottom: 0.5rem;">
-            <span>{{ ep.app_name }}</span>
-            <i class="fas fa-database" style="color: var(--primary);"></i>
-        </div>
-        <h3 style="color: white; margin-bottom: 0.25rem;">/{{ ep.endpoint_name }}</h3>
-        <small style="color: var(--text-muted);">{{ ep.doc_count }} documenten</small>
-        
-        <div style="display: flex; gap: 5px; margin-top: 1rem;">
-            <a href="/manage/export/{{ ep.app_name }}/{{ ep.endpoint_name }}" class="btn btn-sm btn-ghost" title="Backup"><i class="fas fa-download"></i></a>
-            
-            <button class="btn btn-sm btn-ghost" onclick="openImportModal('{{ ep.app_name }}', '{{ ep.endpoint_name }}')" title="Import"><i class="fas fa-upload"></i></button>
-            
-            <form action="/manage/empty" method="POST" onsubmit="return confirm('Weet je zeker dat je dit endpoint LEEG wilt maken? Alle data verdwijnt.');" style="display:inline;">
-                <input type="hidden" name="app_name" value="{{ ep.app_name }}">
-                <input type="hidden" name="endpoint_name" value="{{ ep.endpoint_name }}">
-                <button class="btn btn-sm btn-ghost" style="color:orange;" title="Leegmaken (Truncate)"><i class="fas fa-eraser"></i></button>
-            </form>
-
-            <form action="/manage/delete" method="POST" onsubmit="return confirm('Verwijder endpoint definitief?');" style="display:inline;">
-                <input type="hidden" name="app_name" value="{{ ep.app_name }}">
-                <input type="hidden" name="endpoint_name" value="{{ ep.endpoint_name }}">
-                <button class="btn btn-sm btn-ghost" style="color: #ef4444;" title="Verwijderen"><i class="fas fa-trash"></i></button>
-            </form>
-        </div>
-    </div>
-    {% endfor %}
-</div>
-"""
-
-USERS_CONTENT = """
-<div class="header">
-    <h1>Gebruikersbeheer (Client API Toegang)</h1>
-    <button class="btn btn-primary" onclick="openModal('addUserModal')"><i class="fas fa-plus"></i> Nieuwe Gebruiker</button>
-</div>
-
-<div class="card-panel">
-    <table>
-        <thead>
-            <tr>
-                <th>Gebruikersnaam</th>
-                <th>Token Geldigheid</th>
-                <th>Aangemaakt op</th>
-                <th>Acties</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for user in users %}
-            <tr>
-                <td style="font-weight: 500; color: white;"><i class="fas fa-user-circle"></i> {{ user.username }}</td>
-                <td>
-                    <span class="badge badge-blue">
-                        {{ user.token_validity_hours }} uur 
-                        ({% if user.token_validity_hours == 24 %}1 dag{% elif user.token_validity_hours == 168 %}7 dagen{% elif user.token_validity_hours == 8760 %}1 jaar{% else %}Custom{% endif %})
-                    </span>
-                </td>
-                <td>{{ user.created_at.strftime('%d-%m-%Y') if user.created_at else '-' }}</td>
-                <td>
-                    {% if user.username != 'admin' %}
-                    <form action="/users/delete" method="POST" onsubmit="return confirm('Gebruiker verwijderen?');">
-                        <input type="hidden" name="user_id" value="{{ user._id }}">
-                        <button class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
-                    </form>
-                    {% else %}
-                    <small class="text-muted">Dashboard User (niet verwijderbaar)</small>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-"""
-
-MIGRATION_CONTENT = """
-<div class="header">
-    <h1><i class="fas fa-magic"></i> Database Migratie</h1>
-</div>
-<p style="color: var(--text-muted); margin-bottom: 2rem;">
-    Hieronder staan database collecties die nog niet gekoppeld zijn aan de nieuwe `/api/{app}/{endpoint}` structuur. 
-    Geef ze een Applicatie- en Endpointnaam om ze te importeren.
-</p>
-
-{% if orphans %}
-<div class="card-panel">
-    <div class="panel-header"><span class="panel-title">Ongekoppelde Collecties</span></div>
-    <div style="padding: 1rem;">
-        {% for col in orphans %}
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding:10px 0;">
-            <div>
-                <span style="font-family: monospace; font-size: 1.1rem; color: #cbd5e1;">{{ col }}</span>
-                <div style="font-size: 0.8rem; color: var(--text-muted);">{{ counts[col] }} documenten</div>
-            </div>
-            <form style="display:flex; gap:10px;" action="/migrate/do" method="POST">
-                <input type="hidden" name="old_name" value="{{ col }}">
-                <input type="text" name="new_app" placeholder="App Naam" class="form-input" style="width:120px;" required>
-                <input type="text" name="new_ep" placeholder="Endpoint" class="form-input" style="width:120px;" required>
-                <button type="submit" class="btn btn-sm btn-primary">Migreer</button>
-            </form>
-        </div>
-        {% endfor %}
-    </div>
-</div>
-{% else %}
-<div style="text-align: center; color: var(--text-muted); padding: 4rem; background: var(--card); border-radius: 1rem; border: 1px solid var(--border);">
-    <i class="fas fa-check-circle" style="font-size: 2rem; color: #22c55e;"></i><br><br>
-    Geen ongekoppelde collecties gevonden. Alles is up-to-date!
-</div>
-{% endif %}
-"""
-
-SETTINGS_CONTENT = """
-<div class="header">
-    <h1><i class="fas fa-cogs"></i> Instellingen</h1>
-</div>
-
-<div class="stats-grid">
-    <div class="stat-card" style="grid-column: span 2;">
-        <div class="stat-label" style="margin-bottom: 1rem;"><span>Database Connectie</span></div>
-        
-        <form method="POST">
-            <div class="form-group">
-                <label class="form-label">Host / IP Adres</label>
-                <input type="text" name="host" class="form-input" value="{{ config.get('mongo_host', 'localhost') }}" required>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Poort</label>
-                <input type="number" name="port" class="form-input" value="{{ config.get('mongo_port', 27017) }}" required>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Database User (Optioneel)</label>
-                <input type="text" name="mongo_user" class="form-input" value="{{ config.get('mongo_user', '') }}" placeholder="Leeglaten indien geen auth">
-            </div>
-             <div class="form-group">
-                <label class="form-label">Database Wachtwoord (Optioneel)</label>
-                <input type="password" name="mongo_pass" class="form-input" value="" placeholder="Niet getoond om veiligheidsredenen">
-                <input type="hidden" name="current_mongo_pass_hash" value="{{ config.get('mongo_pass_hash', '') }}">
-            </div>
-
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Opslaan & Testen</button>
-            <small style="color: var(--text-muted); margin-left: 1rem;">Huidige status: <span style="color:{{ 'lime' if db_status else 'red' }}; font-weight:bold;">{{ 'Verbonden' if db_status else 'Niet Verbonden' }}</span></small>
-        </form>
-    </div>
-</div>
-"""
+# ... (de rest van de content strings is in de app.py hieronder)
