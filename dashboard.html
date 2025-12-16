@@ -252,6 +252,18 @@
                                 </tbody>
                             </table>
                         </div>
+                        
+                        <!-- NIEUW: Ruwe Scan Output voor Debugging -->
+                        <div class="card p-6 mt-6">
+                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-red-400">DEBUG: Ruwe Scan Output</h3>
+                            <p class="text-sm text-gray-400 mb-4">Gebruik deze knop om de onbewerkte JSON te zien die de backend terugstuurt, inclusief collecties en tellingen. Dit helpt bij het debuggen van ontbrekende endpoints.</p>
+                            <button id="execute-raw-scan-btn" class="btn-danger py-2 px-4 rounded-md font-semibold">Voer Ruwe Scan Uit (Toon JSON)</button>
+                            <div class="mt-4">
+                                <pre id="raw-scan-response-pre" class="bg-gray-900 p-3 rounded-lg overflow-x-auto text-sm font-mono max-h-96 mt-3">Klik op de knop om de ruwe JSON van /api/collections/scan te laden...</pre>
+                            </div>
+                        </div>
+                        <!-- EINDE NIEUW -->
+
                     </div>
 
                     <!-- 4. Activiteit (Activity Tab) -->
@@ -320,7 +332,6 @@
         const generateKeyForm = document.getElementById('generate-key-form');
         const settingsMessage = document.getElementById('settings-message');
         const activityList = document.getElementById('activity-list');
-        const oldEndpointsList = document.getElementById('old-endpoints-list');
         
         // Elementen voor API Test
         const testClientSelect = document.getElementById('test-client-id');
@@ -341,6 +352,10 @@
         // Elementen voor Scan/Conversie
         const collectionScanTable = document.getElementById('collection-scan-table');
         const scanMessage = document.getElementById('scan-message');
+        
+        // NIEUW: Elementen voor Ruwe Debug Scan
+        const executeRawScanBtn = document.getElementById('execute-raw-scan-btn');
+        const rawScanResponsePre = document.getElementById('raw-scan-response-pre');
         
         // Elementen voor Profiel
         const profileForm = document.getElementById('profile-form');
@@ -387,7 +402,7 @@
                 button.classList.add('active');
                 document.getElementById(`content-${tab}`).classList.remove('hidden');
 
-                // Speciale actie voor scan
+                // Speciale actie voor scan/profiel
                 if (tab === 'old-endpoints') {
                     loadCollectionScan();
                 }
@@ -431,7 +446,7 @@
             }
         }
 
-        // --- NIEUW: API Client Test Handler (GET met Client ID/Key) ---
+        // --- API Client Test Handler (GET met Client ID/Key) ---
         testClientSelect.addEventListener('change', () => {
             const clientId = testClientSelect.value;
             const client = activeClientKeys.find(k => k.client_id === clientId);
@@ -546,7 +561,6 @@
             const url = `${API_BASE_URL}/${endpointName}`;
             
             try {
-                // Let op: Hier gebruiken we de CLIENT API key, want we communiceren met de beveiligde data-endpoint
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: {
@@ -563,7 +577,7 @@
                     showMessage(createEndpointMessage, `Endpoint /api/${endpointName} succesvol aangemaakt (ID: ${responseData.id}).`, false);
                     newEndpointNameInput.value = '';
                     initialDataTextarea.value = JSON.stringify({ "created_by": "admin", "description": "Another placeholder document." }, null, 4); 
-                    loadDashboard(); // Herlaad om nieuwe endpoint in de lijst te tonen
+                    loadDashboard(); 
                 } else {
                     showMessage(createEndpointMessage, `Aanmaak mislukt (Status ${response.status}): ${responseData.error || 'Serverfout'}`, true);
                 }
@@ -572,6 +586,20 @@
             }
         });
 
+        // --- Ruwe Debug Scan Logica ---
+        executeRawScanBtn.addEventListener('click', async () => {
+            rawScanResponsePre.textContent = 'Bezig met laden...';
+            
+            try {
+                const scanData = await safeFetch('/collections/scan');
+                // Toon de onbewerkte, geformatteerde JSON
+                rawScanResponsePre.textContent = JSON.stringify(scanData, null, 2);
+            } catch (error) {
+                rawScanResponsePre.textContent = `Fout bij ruwe scan: ${error.message}`;
+            }
+        });
+
+
         // --- Scan en Conversie Logica ---
 
         async function loadCollectionScan() {
@@ -579,7 +607,6 @@
             collectionScanTable.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">Bezig met scannen...</td></tr>';
             
             try {
-                // Gebruik de dashboard sessie (cookie) om de scan uit te voeren
                 const scanData = await safeFetch('/collections/scan'); 
                 renderCollectionScanTable(scanData);
             } catch (error) {
@@ -597,6 +624,9 @@
             }
 
             collections.forEach(col => {
+                // Sla collecties met alleen errors over
+                if (col.error) return; 
+
                 const row = document.createElement('tr');
                 const isOrphan = col.orphan_documents > 0;
                 
@@ -624,10 +654,10 @@
         // --- Conversie Modal Simulatie ---
         
         window.showConversionModal = function(collectionName, count) {
+            // Vereenvoudigde prompt in plaats van een full custom modal
             const clientIdToAdopt = prompt(`Wilt u ${count} documenten in collectie '${collectionName}' converteren? \n\nVoer het CLIENT ID in waaraan deze data moet worden toegewezen (bijv. de ID van uw frontend app).`);
 
             if (clientIdToAdopt) {
-                // Controleer of de ingevoerde ID bestaat
                 if (activeClientKeys.some(k => k.client_id === clientIdToAdopt)) {
                      if (confirm(`Bevestig: Alle ${count} weesdocumenten in ${collectionName} toewijzen aan Client ID ${clientIdToAdopt}? Dit is onomkeerbaar!`)) {
                         performConversion(collectionName, clientIdToAdopt);
@@ -644,7 +674,6 @@
              showMessage(scanMessage, `Conversie van ${collectionName} gestart...`, false);
 
              try {
-                // Gebruik de dashboard sessie (cookie) om de beheeractie uit te voeren
                 const response = await safeFetch('/collections/convert', {
                     method: 'POST',
                     body: JSON.stringify({ collection_name: collectionName, client_id: clientId })
