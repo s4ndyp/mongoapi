@@ -5,7 +5,7 @@ import secrets
 import string
 import re
 from functools import wraps
-from flask import Flask, request, jsonify, redirect, url_for, flash, make_response
+from flask import Flask, request, jsonify, redirect, url_for, flash, make_response, send_from_directory
 from flask_cors import CORS 
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
@@ -165,17 +165,33 @@ def create_initial_admin(db):
         print(f"Gebruikersnaam: admin")
         print(f"Wachtwoord: {admin_pass}\n")
         
+# --- Statische Bestanden Serveren (voor Dashboard) ---
+
+@app.route('/')
+def serve_dashboard():
+    """
+    Serveert het statische dashboard.html bestand vanaf de root URL.
+    """
+    # De directory is de map waarin app_universal.py draait.
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'dashboard.html')
+
+# U kunt ook een aparte route toevoegen als u de URL /dashboard.html wilt behouden:
+@app.route('/dashboard.html')
+def serve_dashboard_file():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'dashboard.html')
+
+
 # --- API Route (Universeel Pad) ---
 @app.route('/api/<path:endpoint_path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @check_api_key
 def data_endpoint(endpoint_path):
-    # ... [CRUD logica blijft ongewijzigd] ...
     # Globale vars (client_id is ingesteld door check_api_key)
     g = globals()
     client_id = g['client_id']
 
     # 1. Pad ontleden
-    # Splitsen op '/' en lege componenten verwijderen
     parts = [p for p in endpoint_path.strip('/').split('/') if p]
 
     if not parts:
@@ -189,40 +205,33 @@ def data_endpoint(endpoint_path):
             ObjectId(parts[-1])
             doc_id = parts[-1]
         except:
-            pass # Geen geldige ObjectId, dus het is een deel van de collectienaam of een normale GET
+            pass 
 
     # 2. De unieke 'endpoint_name' (collectienaam) bepalen
     if doc_id:
-        # Als we een doc_id hebben gevonden, is de collectienaam de rest van het pad
         endpoint_parts = parts[:-1]
     else:
-        # Anders is het volledige pad de collectienaam
         endpoint_parts = parts
 
-    # De collectienaam is de samenvoeging van de padcomponenten met een underscore.
-    # Dit is de gesaneerde, universele collectie-ID: bijv. ['group', 'resource'] -> 'group_resource'
     endpoint_name = "_".join(endpoint_parts).lower()
     
-    if not endpoint_name or len(endpoint_name) > 100: # Max lengte beperken
+    if not endpoint_name or len(endpoint_name) > 100: 
         return jsonify({"error": "Invalid or too long collection name derived from path."}), 400
 
     # 3. Database en Collectie
     db = get_db()
     if db is None: return jsonify({"error": "Database connection error"}), 503
     
-    # Collectienaam dynamisch bepalen
     collection = db[endpoint_name] 
 
     # Logica voor GET (met of zonder ID)
     if request.method == 'GET':
         if doc_id:
-            # GET /api/group/resource_id
             try:
                 oid = ObjectId(doc_id)
             except:
                 return jsonify({"error": "Invalid document ID format."}), 400
             
-            # Zoeken op ID en client_id
             doc = collection.find_one({'_id': oid, 'meta.client_id': client_id})
             if doc is None:
                 return jsonify({"error": "Document not found or access denied."}), 404
@@ -232,25 +241,18 @@ def data_endpoint(endpoint_path):
             log_statistic("get_one", client_id, endpoint_name)
             return jsonify({"id": doc['id'], "data": doc}), 200
         else:
-            # GET /api/group/resource
-            # Optionele zoekparameters in de query string
             query_params = {k: v for k, v in request.args.items() if k not in ['api_key', 'client_id']}
             
-            # Voeg client_id toe om alleen eigen documenten te tonen
             filter_query = {'meta.client_id': client_id}
             
-            # Eenvoudige filtering op basis van query parameters
-            # Let op: dit is een zeer simpele implementatie. Geen complexe MongoDB operators.
             for key, value in query_params.items():
                 if key.startswith('meta.'):
                     filter_query[key] = value
                 else:
-                    # Zoek in het 'data' object (aangenomen dat alle data daar zit)
                     filter_query[f'data.{key}'] = value
 
             docs = list(collection.find(filter_query, {'_id': 1, 'id': 1, 'data': 1, 'meta': 1}))
             
-            # Formatteer de resultaten
             results = []
             for doc in docs:
                 doc['id'] = str(doc['_id'])
@@ -269,27 +271,22 @@ def data_endpoint(endpoint_path):
         if not data:
             return jsonify({"error": "No JSON payload provided."}), 400
         
-        # De payload moet de eigenlijke data zijn (volgens de platte structuur)
         new_doc = {'data': data}
         
-        # Voeg metadata toe
         new_doc['meta'] = {
             'created_at': datetime.datetime.utcnow(),
             'updated_at': datetime.datetime.utcnow(),
             'client_id': client_id,
         }
 
-        # Optionele 'meta' in de payload toevoegen als deze bestaat
         if 'meta' in data:
             new_doc['meta'].update(data['meta'])
-            del new_doc['data']['meta'] # Zorg ervoor dat 'meta' niet dubbel in 'data' zit
+            del new_doc['data']['meta']
 
-        # Invoegen en ID ophalen
         try:
             result = collection.insert_one(new_doc)
             log_statistic("create_one", client_id, endpoint_name)
             
-            # De return structuur volgt de verpakte aanpak
             return jsonify({
                 "id": str(result.inserted_id), 
                 "data": {
@@ -314,13 +311,10 @@ def data_endpoint(endpoint_path):
         except:
             return jsonify({"error": "Invalid document ID format."}), 400
             
-        # De payload is de nieuwe 'data' inhoud
         update_set = {'data': data}
         
-        # Update metadata
         update_set['meta'] = {'updated_at': datetime.datetime.utcnow(), 'client_id': client_id}
         
-        # Gebruik de $set operator voor de update
         result = collection.update_one(
             {'_id': oid, 'meta.client_id': client_id}, 
             {'$set': update_set}
@@ -335,7 +329,6 @@ def data_endpoint(endpoint_path):
         del updated_doc['_id']
         
         log_statistic("update_one", client_id, endpoint_name)
-        # De return structuur volgt de verpakte aanpak
         return jsonify({
             "id": updated_doc['id'], 
             "data": {
@@ -354,7 +347,6 @@ def data_endpoint(endpoint_path):
         except:
             return jsonify({"error": "Invalid document ID format."}), 400
 
-        # Verwijder op ID en client_id
         result = collection.delete_one({'_id': oid, 'meta.client_id': client_id})
         
         if result.deleted_count == 0: 
@@ -367,13 +359,13 @@ def data_endpoint(endpoint_path):
     return jsonify({"error": "Method not allowed for this route."}), 405
 
 
-# --- Dashboard API Routes (Niet langer HTML-rendering) ---
+# --- Dashboard API Routes ---
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
     db = get_db()
     if db:
-        create_initial_admin(db) # Zorgt voor de admin als deze niet bestaat
+        create_initial_admin(db) 
 
     data = request.get_json()
     username = data.get('username')
@@ -384,15 +376,14 @@ def api_login():
     if user and check_password(password, user['password']):
         token = generate_jwt(user['username'])
         
-        # De JWT wordt in een HTTP-only cookie gezet voor beveiliging
         resp = make_response(jsonify({'message': 'Login succesvol'}), 200)
         resp.set_cookie(
             app.config['JWT_COOKIE_NAME'], 
             token, 
             httponly=True, 
-            secure=app.config.get('ENV') == 'production', # Alleen true in prod
+            secure=app.config.get('ENV') == 'production',
             samesite='Lax',
-            max_age=app.config['JWT_EXPIRY_MINUTES'] * 60 # seconden
+            max_age=app.config['JWT_EXPIRY_MINUTES'] * 60
         )
         return resp
     else:
@@ -400,7 +391,6 @@ def api_login():
 
 @app.route('/api/logout', methods=['POST'])
 def api_logout():
-    # Cookie onmiddellijk laten verlopen
     resp = make_response(jsonify({'message': 'Succesvol uitgelogd'}), 200)
     resp.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True, samesite='Lax')
     return resp
@@ -412,7 +402,6 @@ def api_dashboard():
     g = globals()
     user_id = g['user_id']
     
-    # Haal de meest gebruikte endpoints op
     pipeline = [
         {'$group': {'_id': '$endpoint', 'count': {'$sum': 1}}},
         {'$sort': {'count': -1}},
@@ -421,17 +410,13 @@ def api_dashboard():
     
     endpoint_stats = list(db.statistics.aggregate(pipeline))
     
-    # Haal de meest recente API aanvragen op
     recent_activity = list(db.statistics.find().sort('timestamp', -1).limit(20))
     
-    # Haal de totale tellingen op
     collection_names = db.list_collection_names()
-    # Filter de interne collecties (users, clients, statistics, system.indexes)
     total_endpoints = len([name for name in collection_names if name not in ['users', 'clients', 'statistics', 'system.indexes']])
     total_clients = db.clients.count_documents({})
     total_calls = db.statistics.count_documents({})
     
-    # Formatteer tijdstempels voor JSON
     def format_doc(doc):
         doc['timestamp'] = doc['timestamp'].isoformat()
         return doc
@@ -456,7 +441,6 @@ def api_settings():
     user_id = g['user_id']
     
     if request.method == 'GET':
-        # Haal alle keys op voor de ingelogde gebruiker
         api_keys = []
         for client in db.clients.find({'user_id': user_id, 'revoked': False}):
             api_keys.append({
@@ -468,7 +452,6 @@ def api_settings():
         return jsonify({'api_keys': api_keys, 'user_id': user_id})
 
     elif request.method == 'POST':
-        # Genereer een nieuwe key
         data = request.get_json()
         description = data.get('description', 'Nieuwe client')
         
@@ -491,7 +474,6 @@ def api_settings():
         }), 201
 
     elif request.method == 'DELETE':
-        # Trek een key in (revoke)
         data = request.get_json()
         client_id_to_revoke = data.get('client_id')
 
@@ -516,5 +498,4 @@ if __name__ == '__main__':
         create_initial_admin(db)
         
     # Start de Flask app
-    # Gebruik host='0.0.0.0' om extern bereikbaar te zijn
     app.run(host='0.0.0.0', port=5000, debug=True)
