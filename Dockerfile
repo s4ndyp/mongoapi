@@ -11,8 +11,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Kopieer de rest van de applicatie code
-COPY *.*
-#COPY dashboard.html .
+COPY app.py .
+COPY dashboard.html .
+COPY styles.css .
+COPY tailwind .
 
 
 # Maak poort 5000 beschikbaar voor de buitenwereld
