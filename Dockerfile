@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Kopieer de rest van de applicatie code
 COPY app.py .
 COPY dashboard.html .
-COPY migrate.py .
+
 
 # Maak poort 5000 beschikbaar voor de buitenwereld
 EXPOSE 5000
