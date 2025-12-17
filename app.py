@@ -233,7 +233,7 @@ def admin_import():
             
             # 2. Nieuwe Meta toevoegen
             clean_rec['_meta'] = {
-                'owner': 'ADMIN_IMPORT', # Of haal uit het bestand als je owner wilt behouden (minder veilig)
+                'owner': 'sandman', # Of haal uit het bestand als je owner wilt behouden (minder veilig)
                 'created_at': datetime.datetime.utcnow(),
                 'import_batch': True
             }
