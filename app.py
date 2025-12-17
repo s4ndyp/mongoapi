@@ -92,6 +92,7 @@ def format_doc(doc):
     return doc
 
 def clean_incoming_data(data):
+    """Verwijdert velden die met _ beginnen (beveiliging)."""
     if not isinstance(data, dict): return data
     return {k: v for k, v in data.items() if not k.startswith('_')}
 
@@ -201,6 +202,52 @@ def admin_search():
     docs = list(db[col].find(query).limit(50))
     return jsonify(format_doc(docs))
 
+@app.route('/api/admin/import', methods=['POST'])
+def admin_import():
+    """
+    Importeert een lijst met records (JSON).
+    Schoont inkomende data op (verwijdert _id, _meta, etc) en maakt nieuwe records aan.
+    """
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
+    try:
+        payload = request.json
+        col_name = payload.get('collection')
+        records = payload.get('records')
+        
+        if not col_name or not isinstance(records, list):
+            return jsonify({'error': 'Ongeldige data structuur. Verwacht {collection, records:[]}'}), 400
+
+        inserted_count = 0
+        batch = []
+        
+        # We gebruiken een generieke admin-owner voor imports via dashboard, 
+        # tenzij we besluiten de oorspronkelijke owner te behouden?
+        # VEILIGHEID: We geven het een 'admin_import' eigenaar of de huidige g.client_id als die er is.
+        # Aangezien admin dashboard geen headers stuurt, gebruiken we 'ADMIN_IMPORT'.
+        
+        for rec in records:
+            # 1. Schoonmaken (verwijder oude ids en systeemvelden)
+            clean_rec = clean_incoming_data(rec)
+            
+            # 2. Nieuwe Meta toevoegen
+            clean_rec['_meta'] = {
+                'owner': 'ADMIN_IMPORT', # Of haal uit het bestand als je owner wilt behouden (minder veilig)
+                'created_at': datetime.datetime.utcnow(),
+                'import_batch': True
+            }
+            batch.append(clean_rec)
+            
+        if batch:
+            res = db[col_name].insert_many(batch)
+            inserted_count = len(res.inserted_ids)
+            
+        return jsonify({'count': inserted_count})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/admin/bulk_delete', methods=['POST'])
 def admin_bulk_delete():
     db = get_db()
@@ -278,7 +325,7 @@ def admin_update_record(col_name, doc_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# --- STATIC FILES SUPPORT (Config + CSS) ---
+# --- STATIC FILES ---
 @app.route('/tailwind_config.js')
 def serve_tailwind_config():
     root_dir = os.path.dirname(os.path.abspath(__file__))
