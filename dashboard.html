@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>G2 Ultimate Console</title>
+    <title>G2 Ultimate Console | Proxlan Style</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -14,36 +14,45 @@
 
     <style>
         body { font-family: 'Inter', sans-serif; }
+        
+        /* Glassmorphism Effecten */
         .glass-panel {
             background: rgba(30, 41, 59, 0.7);
             backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
+
         .main-layout {
             display: grid;
             grid-template-columns: 280px 420px 1fr;
             height: 100vh;
+            gap: 0;
             background: radial-gradient(circle at top right, #1e293b, #0f172a);
         }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-        
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        /* Actieve item animatie */
         .item-active {
             background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0) 100%);
             border-left: 4px solid rgb(var(--color-primary));
         }
 
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        
-        /* De balk weer heel dun en strak */
-        .size-bar { height: 2px; background: rgba(255,255,255,0.05); margin-top: 6px; width: 100%; border-radius: 1px; overflow: hidden; }
-        .size-fill { height: 100%; background: rgb(var(--color-primary)); box-shadow: 0 0 8px rgb(var(--color-primary)); }
+        /* Status Glow */
+        .glow-green { box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
+        .glow-primary { box-shadow: 0 0 15px rgba(99, 102, 241, 0.3); }
 
         textarea.editor-canvas {
             background: #0f172a;
             color: #94a3b8;
             font-family: 'Fira Code', monospace;
             border-radius: 12px;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);
         }
     </style>
 </head>
@@ -55,120 +64,173 @@
         
         <aside class="flex flex-col border-r border-white/5 bg-dark/40 shadow-2xl z-20">
             <div class="p-8">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg text-white">
+                <div class="flex items-center gap-3 mb-2">
+                    <div class="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg glow-primary text-white">
                         <i class="fas fa-database text-xl"></i>
                     </div>
                     <div>
-                        <h1 class="text-white font-bold text-lg leading-none">G2 Admin</h1>
-                        <div id="api-indicator" class="text-[9px] text-primary font-bold mt-1 uppercase tracking-widest hidden">Remote Mode</div>
+                        <h1 class="text-white font-bold text-lg leading-none">G2 Console</h1>
+                        <span class="text-[10px] text-primary font-bold uppercase tracking-widest">Enterprise API</span>
                     </div>
                 </div>
+                <div id="api-indicator" class="mt-4 px-3 py-1.5 bg-dark_paper rounded-lg border border-white/5 text-[10px] font-mono text-slate-500 hidden truncate"></div>
             </div>
 
-            <nav class="flex-grow px-4 custom-scrollbar overflow-y-auto space-y-6">
-                <div>
-                    <div id="filter-all" onclick="applyFilter('ALL', null)" class="flex justify-between items-center px-4 py-3 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
-                        <span class="group-hover:text-white text-sm font-medium"><i class="fas fa-layer-group mr-3 opacity-40"></i>Alles</span>
-                        <span id="count-all" class="bg-primary/20 text-primary text-[10px] font-bold px-2 py-0.5 rounded-md">0</span>
+            <nav class="flex-grow px-4 custom-scrollbar overflow-y-auto">
+                <div class="space-y-8">
+                    <div>
+                        <span class="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Overzicht</span>
+                        <div class="mt-4 space-y-1">
+                            <div id="filter-all" onclick="applyFilter('ALL', null)" class="flex justify-between items-center px-4 py-3 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
+                                <span class="group-hover:text-white transition-colors font-medium"><i class="fas fa-globe-europe mr-3 opacity-50"></i>Alles</span>
+                                <span id="count-all" class="bg-primary/20 text-primary text-[10px] font-bold px-2 py-0.5 rounded-md">0</span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div>
-                    <span class="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Apps</span>
-                    <div id="list-apps" class="mt-2 space-y-1"></div>
-                </div>
-                <div>
-                    <span class="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Users</span>
-                    <div id="list-users" class="mt-2 space-y-1"></div>
+
+                    <div>
+                        <span class="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Applicaties</span>
+                        <div id="list-apps" class="mt-4 space-y-1"></div>
+                    </div>
+
+                    <div>
+                        <span class="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Gebruikers</span>
+                        <div id="list-users" class="mt-4 space-y-1"></div>
+                    </div>
                 </div>
             </nav>
 
-            <div class="p-6 border-t border-white/5">
-                <div class="flex justify-between items-center mb-4">
-                    <span id="stat-db-size" class="text-[10px] font-mono text-slate-500 uppercase">0.00 MB</span>
-                    <div class="flex gap-3">
-                        <button onclick="runCleanup()" class="text-slate-500 hover:text-white transition"><i class="fas fa-broom"></i></button>
-                        <button onclick="setApiUrl()" class="text-slate-500 hover:text-white transition"><i class="fas fa-cog"></i></button>
-                    </div>
+            <div class="p-6 bg-dark_paper/30 border-t border-white/5">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-[10px] font-bold text-slate-500 uppercase">Systeem Status</span>
+                    <button onclick="setApiUrl()" class="text-slate-500 hover:text-white transition"><i class="fas fa-cog"></i></button>
                 </div>
-                <div id="list-errors" class="space-y-1"></div>
+                <div id="list-errors" class="space-y-2 max-h-32 overflow-y-auto custom-scrollbar"></div>
             </div>
         </aside>
 
         <main class="flex flex-col bg-dark/20 z-10 border-r border-white/5">
-            <header class="p-8 pb-4 flex justify-between items-center">
-                <h2 id="list-title" class="text-xl font-bold text-white tracking-tight">Endpoints</h2>
-                <button onclick="refresh()" class="text-slate-500 hover:text-white transition"><i class="fas fa-sync-alt"></i></button>
+            <header class="p-8 pb-4 flex justify-between items-end">
+                <div>
+                    <h2 id="list-title" class="text-2xl font-bold text-white tracking-tight">Endpoints</h2>
+                    <p class="text-xs text-slate-500 mt-1" id="stat-db-size">Database: 0.00 MB</p>
+                </div>
+                <button onclick="refresh()" class="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 transition-all border border-white/5">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
             </header>
             
-            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-2">
+            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-3">
                 </div>
         </main>
 
-        <section class="relative flex flex-col h-full overflow-hidden bg-dark/10">
-            <div id="detail-placeholder" class="absolute inset-0 flex flex-col items-center justify-center opacity-10 pointer-events-none">
-                <i class="fas fa-terminal text-9xl"></i>
+        <section class="relative flex flex-col h-full overflow-hidden">
+            <div id="detail-placeholder" class="absolute inset-0 flex flex-col items-center justify-center opacity-20 pointer-events-none">
+                <i class="fas fa-terminal text-9xl mb-6"></i>
+                <p class="text-xl font-medium">Selecteer Data Endpoint</p>
             </div>
 
             <div id="detail-content" class="hidden h-full flex flex-col">
                 <div class="p-8">
-                    <div class="glass-panel p-6 rounded-2xl flex justify-between items-center">
-                        <div class="flex items-center gap-4">
-                            <h2 id="det-name" class="text-2xl font-bold text-white tracking-tight">...</h2>
-                            <div class="flex gap-2">
-                                <span id="det-lock-badge" class="hidden px-2 py-0.5 rounded bg-red-500/20 text-red-500 text-[9px] font-bold border border-red-500/20">LOCKED</span>
-                                <span id="det-ttl-badge" class="hidden px-2 py-0.5 rounded bg-primary/20 text-primary text-[9px] font-bold border border-primary/20">TTL: <span id="det-ttl-val"></span>d</span>
+                    <div class="glass-panel p-6 rounded-2xl flex justify-between items-center shadow-2xl">
+                        <div class="flex items-center gap-6">
+                            <div class="p-4 bg-primary/10 rounded-2xl border border-primary/20">
+                                <i class="fas fa-folder-open text-3xl text-primary"></i>
+                            </div>
+                            <div>
+                                <div class="flex items-center gap-3">
+                                    <h2 id="det-name" class="text-3xl font-bold text-white tracking-tight">...</h2>
+                                    <button onclick="renameEndpoint()" class="text-slate-500 hover:text-white transition text-sm">✎</button>
+                                </div>
+                                <div class="flex gap-2 mt-2">
+                                    <span id="det-lock-badge" class="hidden px-2 py-0.5 rounded-md text-[9px] font-black bg-red-500 text-white uppercase tracking-tighter">Read Only</span>
+                                    <span id="det-ttl-badge" class="hidden px-2 py-0.5 rounded-md text-[9px] font-black bg-blue-500 text-white uppercase tracking-tighter">Auto-Purge: <span id="det-ttl-val"></span>d</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="flex gap-2">
-                            <button onclick="downloadEndpoint()" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition"><i class="fas fa-download"></i></button>
-                            <button onclick="triggerImport()" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition"><i class="fas fa-upload"></i></button>
-                            <button onclick="doClone()" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition"><i class="fas fa-copy"></i></button>
-                            <button onclick="truncateEndpoint()" class="w-9 h-9 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 flex items-center justify-center text-yellow-500 transition"><i class="fas fa-eraser"></i></button>
-                            <button onclick="dropEndpoint()" class="w-9 h-9 rounded-lg bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition"><i class="fas fa-trash-alt"></i></button>
+                        <div class="flex gap-3">
+                            <button onclick="downloadEndpoint()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Export"><i class="fas fa-download"></i></button>
+                            <button onclick="triggerImport()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Import"><i class="fas fa-upload"></i></button>
+                            <button onclick="doClone()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Kloon"><i class="fas fa-copy"></i></button>
+                            <button onclick="truncateEndpoint()" class="w-10 h-10 rounded-xl bg-yellow-500/10 hover:bg-yellow-500/20 flex items-center justify-center text-yellow-500 transition border border-yellow-500/20" title="Leegmaken"><i class="fas fa-eraser"></i></button>
+                            <button onclick="dropEndpoint()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Drop"><i class="fas fa-trash-alt"></i></button>
                         </div>
                     </div>
                 </div>
 
-                <div class="px-8 flex items-center justify-between mb-4">
-                    <div class="flex bg-dark_paper p-1 rounded-xl border border-white/5">
-                        <button onclick="switchTab('data')" id="tab-btn-data" class="px-5 py-2 rounded-lg text-xs font-bold bg-primary text-white transition-all">Data</button>
-                        <button onclick="switchTab('settings')" id="tab-btn-settings" class="px-5 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-white transition-all">Settings</button>
+                <div class="px-8 flex items-center justify-between gap-8 mb-6">
+                    <div class="flex bg-dark_paper/50 p-1 rounded-xl border border-white/5">
+                        <button onclick="switchTab('data')" id="tab-btn-data" class="px-6 py-2 rounded-lg text-sm font-bold bg-primary text-white shadow-lg transition-all">Data & Canvas</button>
+                        <button onclick="switchTab('settings')" id="tab-btn-settings" class="px-6 py-2 rounded-lg text-sm font-bold text-slate-500 hover:text-white transition-all">Configuratie</button>
                     </div>
-                    <div id="search-toolbar" class="flex gap-2 flex-grow max-w-md ml-4">
+                    
+                    <div id="search-toolbar" class="flex-grow flex gap-3">
                         <div class="relative flex-grow">
-                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-[10px]"></i>
-                            <input type="text" id="search-term" placeholder="Query..." class="w-full bg-dark_paper border border-white/5 rounded-lg pl-9 pr-4 py-2 text-xs text-white focus:border-primary outline-none">
+                            <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                            <input type="text" id="search-term" placeholder="Zoek records op ID, eigenaar of inhoud..." class="w-full bg-dark_paper border border-white/5 rounded-xl pl-12 pr-4 py-2.5 text-sm text-white focus:border-primary outline-none transition-all shadow-xl">
                         </div>
-                        <button onclick="doSearch()" class="px-4 py-2 bg-primary text-white rounded-lg text-xs font-bold">ZOEK</button>
+                        <button onclick="doSearch()" class="px-8 py-2.5 bg-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/20 hover:opacity-90 transition">Query</button>
                     </div>
                 </div>
 
                 <div class="flex-grow px-8 pb-8 overflow-hidden">
-                    <div class="glass-panel rounded-2xl h-full flex overflow-hidden border border-white/5">
+                    <div class="glass-panel rounded-3xl h-full flex overflow-hidden border border-white/10 shadow-inner">
+                        
                         <div id="tab-data" class="flex h-full w-full">
-                            <div class="w-[280px] border-r border-white/5 flex flex-col h-full bg-black/5">
-                                <div id="search-results" class="flex-grow overflow-y-auto custom-scrollbar p-3 space-y-1.5"></div>
+                            <div class="w-[340px] border-r border-white/5 flex flex-col h-full bg-black/10">
+                                <div class="p-4 border-b border-white/5 bg-dark/20">
+                                    <span class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Query Resultaten</span>
+                                </div>
+                                <div id="search-results" class="flex-grow overflow-y-auto custom-scrollbar p-3 space-y-2">
+                                    <div class="text-center mt-20 text-xs text-slate-600">Voer een zoekopdracht uit om data te inspecteren</div>
+                                </div>
                             </div>
+
                             <div class="flex-grow flex flex-col h-full relative p-6">
-                                <button id="editor-actions" onclick="saveRecord()" class="hidden absolute top-10 right-10 z-10 px-4 py-2 bg-secondary text-white rounded-lg text-xs font-bold shadow-lg">BEWAAR</button>
-                                <textarea id="json-editor" class="editor-canvas flex-grow p-8 hidden custom-scrollbar outline-none"></textarea>
-                                <div id="editor-placeholder" class="m-auto text-slate-600 text-xs italic">Selecteer record</div>
+                                <div id="editor-actions" class="hidden absolute top-10 right-10 z-10 flex gap-2">
+                                    <button onclick="saveRecord()" class="px-6 py-2 bg-secondary text-white rounded-xl text-xs font-bold shadow-xl shadow-secondary/20 hover:opacity-90 transition">
+                                        <i class="fas fa-save mr-2"></i>Bewaar wijzigingen
+                                    </button>
+                                </div>
+                                <div id="editor-placeholder" class="m-auto text-slate-600 text-sm">Selecteer een resultaat uit de lijst</div>
+                                <textarea id="json-editor" class="editor-canvas flex-grow p-10 hidden custom-scrollbar outline-none"></textarea>
                             </div>
                         </div>
-                        <div id="tab-settings" class="hidden w-full h-full p-12">
-                            <div class="max-w-sm mx-auto space-y-8">
-                                <div class="flex items-center justify-between p-4 bg-dark_paper rounded-xl">
-                                    <span class="text-sm font-bold">Lock Endpoint</span>
-                                    <input type="checkbox" id="set-locked">
+
+                        <div id="tab-settings" class="hidden w-full h-full p-12 overflow-y-auto">
+                            <div class="max-w-xl mx-auto space-y-8">
+                                <div class="space-y-4">
+                                    <h3 class="text-xl font-bold text-white">Toegangsbeheer</h3>
+                                    <div class="p-6 bg-dark_paper rounded-2xl flex items-center justify-between border border-white/5">
+                                        <div>
+                                            <p class="font-bold text-white">Endpoint Locking</p>
+                                            <p class="text-xs text-slate-500 mt-1">Voorkom alle schrijfacties (POST, PUT, DELETE) voor clients.</p>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" id="set-locked" class="sr-only peer">
+                                            <div class="w-14 h-7 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500 shadow-lg"></div>
+                                        </label>
+                                    </div>
                                 </div>
-                                <div class="flex items-center justify-between p-4 bg-dark_paper rounded-xl">
-                                    <span class="text-sm font-bold">TTL (Dagen)</span>
-                                    <input type="number" id="set-ttl" class="w-16 bg-dark border-none rounded p-1 text-center">
+
+                                <div class="space-y-4 pt-4 border-t border-white/5">
+                                    <h3 class="text-xl font-bold text-white">Data Lifecycle</h3>
+                                    <div class="p-6 bg-dark_paper rounded-2xl flex items-center justify-between border border-white/5">
+                                        <div>
+                                            <p class="font-bold text-white">Automatische Retentie (TTL)</p>
+                                            <p class="text-xs text-slate-500 mt-1">Verwijder records die ouder zijn dan het aantal dagen.</p>
+                                        </div>
+                                        <div class="flex items-center gap-3">
+                                            <input type="number" id="set-ttl" class="w-20 bg-dark border border-white/10 rounded-xl p-2.5 text-center font-bold text-white focus:border-primary outline-none" placeholder="0">
+                                            <span class="text-sm font-bold">dagen</span>
+                                        </div>
+                                    </div>
                                 </div>
-                                <button onclick="saveSettings()" class="w-full py-3 bg-primary text-white rounded-xl font-bold">OPSLAAN</button>
+                                
+                                <button onclick="saveSettings()" class="w-full py-4 bg-primary text-white rounded-2xl font-bold shadow-xl shadow-primary/20 hover:opacity-90 transition-all text-lg">Update Configuratie</button>
                             </div>
                         </div>
+
                     </div>
                 </div>
             </div>
@@ -176,22 +238,34 @@
     </div>
 
     <script>
+        // --- API CONFIG ---
         const REMOTE_IP = 'http://10.10.2.20:5000'; 
         let API = window.location.origin;
 
         function initializeApi() {
-            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:' || window.location.hostname !== '10.10.2.20';
+            const isLocal = window.location.hostname === 'localhost' || 
+                            window.location.hostname === '127.0.0.1' || 
+                            window.location.protocol === 'file:' ||
+                            window.location.hostname !== '10.10.2.20';
+
             if (isLocal) {
                 API = localStorage.getItem('g2_api_url') || REMOTE_IP;
-                document.getElementById('api-indicator').classList.remove('hidden');
+                const ind = document.getElementById('api-indicator');
+                if (ind) {
+                    ind.classList.remove('hidden');
+                    ind.innerHTML = `<i class="fas fa-network-wired mr-2"></i>Remote: ${API}`;
+                }
             }
         }
         initializeApi();
 
         function setApiUrl() {
             const current = localStorage.getItem('g2_api_url') || API;
-            const newVal = prompt("G2 Server URL:", current);
-            if (newVal) { localStorage.setItem('g2_api_url', newVal.replace(/\/$/, "")); window.location.reload(); }
+            const newVal = prompt("URL van de G2 Server:", current);
+            if (newVal) {
+                localStorage.setItem('g2_api_url', newVal.replace(/\/$/, ""));
+                window.location.reload();
+            }
         }
 
         let globalData = null;
@@ -203,58 +277,77 @@
             try {
                 const res = await fetch(`${API}/api/admin/stats`);
                 globalData = await res.json();
-                document.getElementById('stat-db-size').innerText = `${globalData.db_info.data_size_mb} MB | ${globalData.db_info.total_objects} RECS`;
+                document.getElementById('stat-db-size').innerText = `Database: ${globalData.db_info.data_size_mb} MB | Records: ${globalData.db_info.total_objects}`;
                 document.getElementById('count-all').innerText = globalData.endpoints.length;
                 renderSidebar();
                 renderEndpointsList();
                 renderErrorLog();
                 if(currentEp) loadDetail(currentEp);
-            } catch(e) { console.error("OFFLINE"); }
+            } catch(e) {
+                document.getElementById('endpoints-container').innerHTML = `<div class="p-8 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm font-bold text-center">G2 SERVER OFFLINE: ${API}</div>`;
+            }
         }
 
         function renderSidebar() {
             const apps = {};
-            globalData.endpoints.forEach(ep => { if(ep.name.includes('_')) { const app = ep.name.split('_')[0]; apps[app] = (apps[app] || 0) + 1; } });
-            document.getElementById('list-apps').innerHTML = Object.keys(apps).map(a => `<div class="flex justify-between px-4 py-2 rounded-xl cursor-pointer hover:bg-white/5 ${currentFilter.value === a ? 'item-active' : ''}" onclick="applyFilter('APP', '${a}')"><span class="text-xs capitalize">${a}</span><span class="opacity-30 text-[10px]">${apps[a]}</span></div>`).join('');
-            document.getElementById('list-users').innerHTML = globalData.clients.map(c => `<div class="flex justify-between px-4 py-2 rounded-xl cursor-pointer hover:bg-white/5 ${currentFilter.value === c.client_id ? 'item-active' : ''}" onclick="applyFilter('USER', '${c.client_id}')"><span class="text-xs truncate w-32">${c.client_id}</span><span class="opacity-30 text-[10px]">${c.total_records}</span></div>`).join('');
+            globalData.endpoints.forEach(ep => {
+                if(ep.name.includes('_')) {
+                    const app = ep.name.split('_')[0];
+                    apps[app] = (apps[app] || 0) + 1;
+                }
+            });
+
+            document.getElementById('list-apps').innerHTML = Object.keys(apps).map(a => 
+                `<div class="flex justify-between items-center px-4 py-2.5 rounded-xl cursor-pointer hover:bg-white/5 transition-all group ${currentFilter.value === a ? 'item-active text-white' : ''}" onclick="applyFilter('APP', '${a}')">
+                    <span class="text-sm font-medium group-hover:text-white transition-colors capitalize">${a}</span>
+                    <span class="bg-dark_paper text-[9px] font-bold px-2 py-0.5 rounded-md">${apps[a]}</span>
+                </div>`
+            ).join('');
+
+            document.getElementById('list-users').innerHTML = globalData.clients.map(c => `
+                <div class="flex justify-between items-center px-4 py-2.5 rounded-xl cursor-pointer hover:bg-white/5 transition-all group ${currentFilter.value === c.client_id ? 'item-active text-white' : ''}" onclick="applyFilter('USER', '${c.client_id}')">
+                    <div class="flex flex-col overflow-hidden">
+                        <span class="text-xs font-bold group-hover:text-white transition-colors truncate">${c.client_id}</span>
+                        <span class="text-[9px] text-slate-600">${c.last_seen ? timeAgo(c.last_seen) : 'Nooit'}</span>
+                    </div>
+                    <span class="bg-dark_paper text-[9px] font-bold px-2 py-0.5 rounded-md ml-2">${c.total_records}</span>
+                </div>
+            `).join('');
+
             const allBtn = document.getElementById('filter-all');
-            if(currentFilter.type === 'ALL') allBtn.classList.add('item-active'); else allBtn.classList.remove('item-active');
+            if(currentFilter.type === 'ALL') allBtn.classList.add('item-active', 'bg-white/5');
+            else allBtn.classList.remove('item-active', 'bg-white/5');
         }
 
         function applyFilter(t, v) { currentFilter = { type: t, value: v }; renderSidebar(); renderEndpointsList(); }
 
-        // --- TEGELS HERSTELD (STRAKKE VERSIE) ---
         function renderEndpointsList() {
             const list = document.getElementById('endpoints-container');
-            let filtered = (currentFilter.type === 'ALL') ? globalData.endpoints : (currentFilter.type === 'APP') ? globalData.endpoints.filter(e => e.name.startsWith(currentFilter.value + '_')) : globalData.endpoints.filter(e => e.owners && e.owners.includes(currentFilter.value));
+            let filtered = (currentFilter.type === 'ALL') ? globalData.endpoints : 
+                           (currentFilter.type === 'APP') ? globalData.endpoints.filter(e => e.name.startsWith(currentFilter.value + '_')) :
+                           globalData.endpoints.filter(e => e.owners && e.owners.includes(currentFilter.value));
             
             list.innerHTML = filtered.map(ep => {
-                let dotClass = 'bg-red-500/50';
-                if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) dotClass = 'bg-emerald-500 shadow-[0_0_8px_#10b981]';
+                let statusClass = 'bg-red-500';
+                if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) statusClass = 'bg-emerald-500 glow-green';
+                const active = currentEp === ep.name ? 'item-active bg-white/5 scale-[1.02]' : 'hover:bg-white/5';
                 
-                const active = currentEp === ep.name ? 'item-active' : 'hover:bg-white/5';
-                const sizeKB = Math.round((ep.size_pct * globalData.db_info.data_size_mb * 1024) / 100);
-
-                return `
-                <div class="p-4 rounded-xl glass-panel cursor-pointer transition-all ${active}" onclick="selectEp('${ep.name}')">
-                    <div class="flex justify-between items-start">
-                        <div class="font-mono text-xs font-bold text-slate-200 truncate w-64">${ep.name}</div>
-                        <div class="flex items-center gap-2">
-                            ${ep.locked ? '<i class="fas fa-lock text-red-500 text-[10px]" title="Locked"></i>' : ''}
-                            ${ep.ttl > 0 ? `<i class="fas fa-hourglass-half text-primary text-[10px]" title="TTL: ${ep.ttl}d"></i>` : ''}
-                            <div class="status-dot ${dotClass}"></div>
-                        </div>
+                return `<div class="p-5 rounded-2xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="font-mono text-sm text-slate-200 font-bold tracking-tighter truncate w-64">${ep.name}</div>
+                        <div class="w-2.5 h-2.5 rounded-full ${statusClass} mt-1"></div>
                     </div>
-                    <div class="size-bar"><div class="size-fill" style="width: ${ep.size_pct}%"></div></div>
-                    <div class="flex justify-between mt-2 text-[9px] font-bold text-slate-600 uppercase">
-                        <span>${ep.count} records</span>
-                        <span>${sizeKB} KB</span>
+                    <div class="flex justify-between items-end">
+                        <span class="text-[10px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJECTS</span>
+                        ${ep.locked ? '<i class="fas fa-lock text-red-500 text-xs"></i>' : ''}
                     </div>
+                    <div class="size-bar"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
             }).join('');
         }
 
         function selectEp(n) { currentEp = n; renderEndpointsList(); loadDetail(n); }
+
         function loadDetail(n) {
             const ep = globalData.endpoints.find(e => e.name === n);
             document.getElementById('detail-content').classList.remove('hidden');
@@ -272,7 +365,15 @@
             const term = document.getElementById('search-term').value;
             const res = await fetch(`${API}/api/admin/search`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, term })});
             const docs = await res.json();
-            document.getElementById('search-results').innerHTML = docs.map(d => `<div class="p-3 bg-dark/20 border border-white/5 rounded-lg cursor-pointer hover:border-primary/50 transition-all" onclick="loadRecord('${d._id}')"><div class="text-[10px] text-primary font-bold font-mono">${d._id}</div><div class="text-[9px] text-slate-600 mt-1 uppercase">${d._client_id}</div></div>`).join('');
+            document.getElementById('search-results').innerHTML = docs.map(d => `
+                <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all group" onclick="loadRecord('${d._id}')">
+                    <div class="text-[11px] text-primary font-bold font-mono group-hover:scale-[1.02] transition-transform">${d._id}</div>
+                    <div class="flex justify-between mt-2">
+                        <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${d._client_id}</span>
+                        <span class="text-[9px] text-slate-600">${d._created_at}</span>
+                    </div>
+                </div>
+            `).join('');
         }
 
         async function loadRecord(id) {
@@ -291,31 +392,53 @@
             try {
                 const data = JSON.parse(document.getElementById('json-editor').value);
                 await fetch(`${API}/api/admin/record/${currentEp}/${currentRecordId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
-                alert("Opgeslagen"); refresh();
-            } catch(e) { alert("JSON Fout"); }
+                alert("✓ Record bijgewerkt"); refresh();
+            } catch(e) { alert("X Ongeldige JSON"); }
         }
 
         function triggerImport() { document.getElementById('import-input').click(); }
         async function handleImportFile() {
             const file = document.getElementById('import-input').files[0];
-            const owner = prompt("Owner?", currentFilter.type === 'USER' ? currentFilter.value : 'ADMIN');
-            const clear = confirm("Legen?");
+            const owner = prompt("Eigenaar ID voor import?", currentFilter.type === 'USER' ? currentFilter.value : 'ADMIN_RESTORE');
+            const clear = confirm("⚠️ Collectie eerst leegmaken voor import?");
             const reader = new FileReader();
             reader.onload = async (e) => {
                 await fetch(`${API}/api/admin/import`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, records: JSON.parse(e.target.result), owner, clear_first: clear })});
-                alert("Import klaar"); refresh();
+                alert("✓ Import voltooid"); refresh();
             };
             reader.readAsText(file);
         }
 
-        async function truncateEndpoint() { if(confirm("Legen?")) { await fetch(`${API}/api/admin/clear`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp })}); refresh(); } }
-        async function dropEndpoint() { if(confirm("Verwijderen?")) { await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' }); window.location.reload(); } }
+        async function truncateEndpoint() { if(confirm("⚠️ Alle data in deze collectie wissen?")) { await fetch(`${API}/api/admin/clear`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp })}); refresh(); } }
+        async function dropEndpoint() { if(confirm("⛔ COLLECTIE VOLLEDIG VERWIJDEREN?")) { await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' }); window.location.reload(); } }
         function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
-        async function doClone() { const d = prompt("Naam?"); if(d) { await fetch(`${API}/api/admin/clone`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source: currentEp, destination: d })}); refresh(); } }
-        async function saveSettings() { await fetch(`${API}/api/admin/settings`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, locked: document.getElementById('set-locked').checked, ttl_days: document.getElementById('set-ttl').value })}); refresh(); alert("✓"); }
-        function renderErrorLog() { document.getElementById('list-errors').innerHTML = globalData.errors.map(e => `<div class="text-[9px] text-red-400 truncate">${e.msg}</div>`).join(''); }
-        function switchTab(t) { ['data','settings'].forEach(x => { document.getElementById(`tab-${x}`).classList.add('hidden'); document.getElementById(`tab-btn-${x}`).classList.remove('bg-primary', 'text-white'); }); document.getElementById(`tab-${t}`).classList.remove('hidden'); document.getElementById(`tab-btn-${t}`).classList.add('bg-primary', 'text-white'); }
-        function timeAgo(d) { const s = Math.floor((new Date() - new Date(d))/1000); if(s<60) return s+"s"; return Math.floor(s/60)+"m"; }
+        async function doClone() { const d = prompt("Naam voor kopie:"); if(d) { await fetch(`${API}/api/admin/clone`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source: currentEp, destination: d })}); refresh(); } }
+        async function saveSettings() { await fetch(`${API}/api/admin/settings`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, locked: document.getElementById('set-locked').checked, ttl_days: document.getElementById('set-ttl').value })}); refresh(); alert("✓ Config geüpdatet"); }
+        
+        function renderErrorLog() {
+            document.getElementById('list-errors').innerHTML = globalData.errors.map(e => `
+                <div class="p-2 border-l-2 border-red-500 bg-red-500/5 text-[10px] text-red-400">
+                    <span class="block text-slate-600 font-bold">${e.time.split('T')[1].substr(0,8)}</span> ${e.msg}
+                </div>
+            `).join('');
+        }
+
+        function switchTab(t) {
+            ['data','settings'].forEach(x => {
+                document.getElementById(`tab-${x}`).classList.add('hidden');
+                document.getElementById(`tab-btn-${x}`).classList.remove('bg-primary', 'text-white', 'shadow-lg');
+                document.getElementById(`tab-btn-${x}`).classList.add('text-slate-500');
+            });
+            document.getElementById(`tab-${t}`).classList.remove('hidden');
+            document.getElementById(`tab-btn-${t}`).classList.add('bg-primary', 'text-white', 'shadow-lg');
+            document.getElementById(`tab-btn-${t}`).classList.remove('text-slate-500');
+            document.getElementById('search-toolbar').classList.toggle('hidden', t === 'settings');
+        }
+
+        function timeAgo(d) {
+            const s = Math.floor((new Date() - new Date(d))/1000);
+            if(s<60) return s+"s"; if(s<3600) return Math.floor(s/60)+"m"; if(s<86400) return Math.floor(s/3600)+"u"; return Math.floor(s/86400)+"d";
+        }
 
         refresh();
         setInterval(refresh, 60000);
