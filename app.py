@@ -2,29 +2,32 @@ import os
 import datetime
 import json
 from functools import wraps
-from flask import Flask, request, jsonify, g, Response
+from flask import Flask, request, jsonify, g, Response, send_from_directory
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson import ObjectId
-from bson.json_util import dumps
 
 app = Flask(__name__)
-# CORS: Alles toestaan (beveiliging zit op netwerkniveau/proxy)
+# CORS staat alles toe voor maximale flexibiliteit achter je proxy
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# MongoDB Configuratie
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 
 def get_db():
     try:
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
+        # Check of de database reageert
+        client.admin.command('ping')
         return client['data_store']
     except Exception as e:
-        print(f"DB ERROR: {e}")
+        print(f"DATABASE ERROR: {e}")
         return None
 
 # --- AUTH & FORMATTERS ---
 
 def require_client_id(f):
+    """Decorator die alleen checkt op client_id (Trusted Proxy mode)."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         client_id = request.headers.get('x-client-id') or request.args.get('client_id')
@@ -35,7 +38,7 @@ def require_client_id(f):
     return decorated_function
 
 def format_doc(doc):
-    """Vertaalt Database container-structuur naar platte Client-structuur."""
+    """Vertaalt DB container-structuur naar platte Client-structuur met underscores."""
     if isinstance(doc, list):
         return [format_doc(d) for d in doc]
     if isinstance(doc, dict):
@@ -55,49 +58,39 @@ def format_doc(doc):
     return doc
 
 def clean_incoming_data(data):
-    """Verwijdert systeemvelden (startend met _) bij import."""
+    """Verwijdert alle systeemvelden (startend met _) bij import/opslaan."""
     if not isinstance(data, dict): return data
     return {k: v for k, v in data.items() if not k.startswith('_')}
 
-# --- ADMIN ROUTES (VOOR DASHBOARD) ---
+# --- ADMIN / DASHBOARD ROUTES ---
 
 @app.route('/api/admin/stats', methods=['GET'])
 def admin_stats():
-    """Verzamelt alle statistieken voor het beheerpaneel."""
+    """Verzamelt uitgebreide statistieken voor het beheerpaneel."""
     db = get_db()
-    if not db: return jsonify({'error': 'DB Offline'}), 500
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
 
     cols = db.list_collection_names()
     system_cols = ['clients', 'statistics', 'system.indexes']
     endpoint_names = [c for c in cols if c not in system_cols]
 
-    # 1. Endpoint Statistieken
     endpoint_stats = []
     total_records = 0
-    
-    # 2. Client Statistieken (Aggregatie over alle collecties)
-    client_usage = {} # {client_id: count}
+    client_usage = {} 
 
     for col_name in endpoint_names:
         count = db[col_name].count_documents({})
         total_records += count
-        endpoint_stats.append({
-            'name': col_name,
-            'count': count
-        })
+        endpoint_stats.append({'name': col_name, 'count': count})
 
-        # Tel per gebruiker (dit kan zwaar zijn bij miljoenen records, maar prima voor beheer)
-        pipeline = [
-            {"$group": {"_id": "$_meta.owner", "count": {"$sum": 1}}}
-        ]
+        # Aggregatie: Tel records per owner in deze collectie
+        pipeline = [{"$group": {"_id": "$_meta.owner", "count": {"$sum": 1}}}]
         results = list(db[col_name].aggregate(pipeline))
         for res in results:
             c_id = res['_id'] or "onbekend"
             client_usage[c_id] = client_usage.get(c_id, 0) + res['count']
 
-    # Database stats
     db_stats = db.command("dbstats")
-
     return jsonify({
         'endpoints': endpoint_stats,
         'clients_usage': [{'client_id': k, 'total_records': v} for k, v in client_usage.items()],
@@ -109,40 +102,34 @@ def admin_stats():
 
 @app.route('/api/admin/collections/<name>', methods=['DELETE'])
 def admin_delete_collection(name):
-    """Verwijdert een volledig endpoint."""
+    """Verwijdert een volledig endpoint inclusief alle data."""
     db = get_db()
-    db[name].drop()
-    return jsonify({"status": "deleted", "collection": name})
+    if db is not None:
+        db[name].drop()
+        return jsonify({"status": "deleted", "collection": name})
+    return jsonify({"error": "DB Offline"}), 503
 
 @app.route('/api/admin/rename', methods=['POST'])
 def admin_rename_collection():
-    """Hernoemt een endpoint."""
+    """Hernoemt een endpoint naar een nieuwe naam."""
     db = get_db()
     data = request.json
     old_name = data.get('old_name')
     new_name = data.get('new_name')
-    
-    if not old_name or not new_name:
-        return jsonify({"error": "Namen ontbreken"}), 400
-    
-    try:
-        db[old_name].rename(new_name)
-        return jsonify({"status": "renamed"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    if db is not None:
+        try:
+            db[old_name].rename(new_name)
+            return jsonify({"status": "renamed"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+    return jsonify({"error": "DB Offline"}), 503
 
 @app.route('/api/admin/export/<name>', methods=['GET'])
 def admin_export_collection(name):
-    """
-    Exporteert endpoint als JSON.
-    Format: Platgeslagen met underscores (Import-ready voor Clients).
-    """
+    """Exporteert endpoint als JSON in de platte 'import-ready' structuur."""
     db = get_db()
     docs = list(db[name].find({}))
-    # We gebruiken format_doc zodat de output 'schoon' en importeerbaar is
     formatted_docs = format_doc(docs)
-    
-    # Return als downloadbaar bestand
     return Response(
         json.dumps(formatted_docs, indent=2, default=str),
         mimetype="application/json",
@@ -151,17 +138,18 @@ def admin_export_collection(name):
 
 @app.route('/api/admin/peek/<name>', methods=['GET'])
 def admin_peek_collection(name):
-    """Geeft de eerste 5 records terug voor snelle inspectie."""
+    """Geeft een preview van de eerste 5 records."""
     db = get_db()
     docs = list(db[name].find({}).limit(5))
     return jsonify(format_doc(docs))
 
-# --- CLIENT API ROUTES ---
+# --- GATEWAY API ROUTES ---
 
 @app.route('/api/<collection_name>', methods=['GET', 'POST'])
 @require_client_id
 def api_collection(collection_name):
     db = get_db()
+    if db is None: return jsonify({"error": "DB Offline"}), 503
     col = db[collection_name]
     
     if request.method == 'GET':
@@ -171,12 +159,7 @@ def api_collection(collection_name):
     if request.method == 'POST':
         raw_data = request.get_json(silent=True) or {}
         user_data = clean_incoming_data(raw_data)
-        
-        user_data['_meta'] = {
-            'owner': g.client_id,
-            'created_at': datetime.datetime.utcnow()
-        }
-        
+        user_data['_meta'] = {'owner': g.client_id, 'created_at': datetime.datetime.utcnow()}
         result = col.insert_one(user_data)
         return jsonify({"_id": str(result.inserted_id), "status": "created"}), 201
 
@@ -184,11 +167,10 @@ def api_collection(collection_name):
 @require_client_id
 def api_document(collection_name, doc_id):
     db = get_db()
+    if db is None: return jsonify({"error": "DB Offline"}), 503
     col = db[collection_name]
-    
     try: q_id = ObjectId(doc_id)
     except: q_id = doc_id
-    
     query = {'_id': q_id, '_meta.owner': g.client_id}
 
     if request.method == 'GET':
@@ -198,7 +180,7 @@ def api_document(collection_name, doc_id):
     if request.method == 'PUT':
         user_data = clean_incoming_data(request.get_json(silent=True) or {})
         res = col.update_one(query, {
-            '$set': user_data,
+            '$set': user_data, 
             '$set': {'_meta.updated_at': datetime.datetime.utcnow()}
         })
         return jsonify({"status": "updated" if res.matched_count else "not found"}), 200
@@ -208,10 +190,14 @@ def api_document(collection_name, doc_id):
         return jsonify({"status": "deleted" if res.deleted_count else "not found"}), 200
 
 # --- STATIC DASHBOARD ---
+
 @app.route('/dashboard.html')
 @app.route('/')
 def dashboard_html():
-    return app.send_static_file('dashboard.html') if os.path.exists('static/dashboard.html') else "Dashboard file not found (save code to dashboard.html in same folder)"
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists(os.path.join(root_dir, 'dashboard.html')):
+        return send_from_directory(root_dir, 'dashboard.html')
+    return "Dashboard HTML niet gevonden in de hoofdmap."
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
