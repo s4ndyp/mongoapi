@@ -2,193 +2,187 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>G2 Proxy Dashboard</title>
+    <title>G2 Database Beheer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0d1117; color: #c9d1d9; }
-        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 0.5rem; }
-        .btn-primary { background-color: #238636; color: white; }
-        .btn-primary:hover { background-color: #2ea043; }
-        input, select, textarea { background-color: #0d1117 !important; border-color: #30363d !important; color: white !important; }
-        .tab-btn { padding: 0.5rem 1rem; cursor: pointer; border-bottom: 2px solid transparent; }
-        .tab-btn.active { border-color: #238636; color: #58a6ff; font-weight: bold; }
+        body { background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; }
+        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; }
+        .table-head { background-color: #21262d; color: #8b949e; text-transform: uppercase; font-size: 0.75rem; }
+        .btn { padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem; transition: 0.2s; }
+        .btn-blue { background-color: #1f6feb; color: white; } .btn-blue:hover { background-color: #388bfd; }
+        .btn-red { background-color: #da3633; color: white; } .btn-red:hover { background-color: #f85149; }
+        .btn-gray { background-color: #30363d; color: white; } .btn-gray:hover { background-color: #8b949e; }
+        .icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; }
+        pre { background: #000; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px; font-size: 12px; }
     </style>
 </head>
-<body class="p-6 max-w-7xl mx-auto flex flex-col gap-6">
+<body class="p-6 max-w-7xl mx-auto">
 
-    <header class="flex justify-between items-center pb-4 border-b border-[#30363d]">
-        <h1 class="text-2xl font-bold text-green-400">G2 Gateway (Trusted Mode)</h1>
-        <div class="text-xs text-gray-500">Security managed by Reverse Proxy</div>
+    <header class="flex justify-between items-center mb-8 pb-4 border-b border-[#30363d]">
+        <div>
+            <h1 class="text-2xl font-bold text-white">G2 Database Station</h1>
+            <p class="text-xs text-gray-500">Gateway Administration & Monitoring</p>
+        </div>
+        <div class="text-right text-xs text-gray-400">
+            <div>DB Grootte: <span id="stat-size" class="text-white font-bold">-</span> MB</div>
+            <div>Totaal Records: <span id="stat-total" class="text-white font-bold">-</span></div>
+        </div>
     </header>
 
-    <div class="grid grid-cols-3 gap-6">
-        <div class="card p-4 border-l-4 border-green-500">
-            <div class="text-gray-400 text-sm">Actieve Endpoints</div>
-            <div id="stat-endpoints" class="text-2xl font-bold">-</div>
-        </div>
-        <div class="card p-4 border-l-4 border-blue-500">
-            <div class="text-gray-400 text-sm">Geregistreerde Clients</div>
-            <div id="stat-clients" class="text-2xl font-bold">-</div>
-        </div>
-        <div class="card p-4 border-l-4 border-yellow-500">
-            <div class="text-gray-400 text-sm">Totaal Requests</div>
-            <div id="stat-calls" class="text-2xl font-bold">-</div>
-        </div>
-    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-    <div class="flex space-x-4 border-b border-[#30363d]">
-        <button class="tab-btn active" onclick="showTab('clients')">Clients</button>
-        <button class="tab-btn" onclick="showTab('test')">API Test</button>
-        <button class="tab-btn" onclick="showTab('data')">Data Invoer</button>
-    </div>
-
-    <div id="app-content">
-        
-        <div id="tab-clients" class="block">
-            <div class="card p-6 mt-4">
-                <h2 class="text-lg font-bold mb-4">Client Beheer</h2>
-                <form id="add-client-form" class="flex gap-4 mb-6">
-                    <input type="text" id="new-desc" placeholder="Naam (bijv. Klant A)" class="flex-grow border rounded p-2" required>
-                    <button type="submit" class="btn-primary px-4 py-2 rounded">Toevoegen</button>
-                </form>
-                <table class="w-full text-left text-sm">
-                    <thead><tr class="text-gray-500 border-b border-gray-700">
-                        <th class="p-2">Beschrijving</th>
-                        <th class="p-2">Client ID (Header)</th>
-                        <th class="p-2 text-right">Actie</th>
-                    </tr></thead>
-                    <tbody id="clients-list" class="divide-y divide-gray-800"></tbody>
+        <div class="lg:col-span-2 space-y-6">
+            
+            <div class="card p-0 overflow-hidden">
+                <div class="p-4 border-b border-[#30363d] flex justify-between items-center">
+                    <h2 class="font-bold text-white">Datastore Endpoints</h2>
+                    <button onclick="refresh()" class="text-xs text-blue-400 hover:text-blue-300">Verversen ↻</button>
+                </div>
+                <table class="w-full text-left border-collapse">
+                    <thead class="table-head">
+                        <tr>
+                            <th class="p-3">Naam</th>
+                            <th class="p-3">Records</th>
+                            <th class="p-3 text-right">Acties</th>
+                        </tr>
+                    </thead>
+                    <tbody id="endpoints-list" class="divide-y divide-[#30363d] text-sm"></tbody>
                 </table>
             </div>
+
+            <div id="peek-panel" class="card p-4 hidden border-l-4 border-blue-500">
+                <div class="flex justify-between mb-2">
+                    <h3 class="font-bold text-blue-400">Data Inspectie: <span id="peek-name"></span></h3>
+                    <button onclick="document.getElementById('peek-panel').classList.add('hidden')" class="text-gray-500">X</button>
+                </div>
+                <pre id="peek-content" class="text-green-400"></pre>
+                <div class="text-xs text-gray-500 mt-1">* Toont max 5 recente records</div>
+            </div>
+
         </div>
 
-        <div id="tab-test" class="hidden">
-            <div class="card p-6 mt-4">
-                <h2 class="text-lg font-bold mb-4 text-blue-400">GET Request Test</h2>
-                <div class="space-y-4">
-                    <select id="test-client" class="w-full border rounded p-2"></select>
-                    <div class="flex gap-2 items-center">
-                        <span class="font-mono">/api/</span>
-                        <input id="test-endpoint" type="text" placeholder="collectie" class="flex-grow border rounded p-2">
-                        <button onclick="doGet()" class="btn-primary px-4 py-2 rounded">GET</button>
-                    </div>
-                    <pre id="test-res" class="bg-black p-4 rounded text-xs font-mono min-h-[100px] overflow-auto">Resultaat...</pre>
+        <div class="space-y-6">
+            
+            <div class="card p-4">
+                <h2 class="font-bold text-white mb-4">Gebruik per Client</h2>
+                <div class="overflow-auto max-h-60">
+                    <table class="w-full text-sm">
+                        <thead class="text-gray-500 text-xs text-left"><tr><th>Client ID</th><th class="text-right">Totaal Items</th></tr></thead>
+                        <tbody id="client-stats-list" class="divide-y divide-[#30363d]"></tbody>
+                    </table>
                 </div>
             </div>
-        </div>
 
-        <div id="tab-data" class="hidden">
-            <div class="card p-6 mt-4">
-                <h2 class="text-lg font-bold mb-4 text-green-400">POST Data</h2>
-                <form id="post-form" class="space-y-4">
-                    <select id="post-client" class="w-full border rounded p-2"></select>
-                    <input id="post-endpoint" type="text" placeholder="Collectie (bijv. orders)" class="w-full border rounded p-2" required>
-                    <textarea id="post-body" rows="4" class="w-full border rounded p-2 font-mono text-sm">{"item": "voorbeeld"}</textarea>
-                    <button type="submit" class="btn-primary w-full py-2 rounded">Verstuur</button>
-                </form>
-                <div id="post-res" class="mt-4 text-sm hidden"></div>
+            <div class="card p-4 text-xs text-gray-400 space-y-2">
+                <p><strong class="text-white">Exporteren:</strong> Downloadt data in JSON formaat inclusief `_meta` velden (als `_client_id`), gereed voor import.</p>
+                <p><strong class="text-white">Drop:</strong> Verwijdert de endpoint definitief. Kan niet ongedaan worden gemaakt.</p>
             </div>
         </div>
+    </div>
 
+    <div id="modal-rename" class="fixed inset-0 bg-black/80 hidden flex items-center justify-center">
+        <div class="card p-6 w-96">
+            <h3 class="font-bold text-lg mb-4">Hernoem Endpoint</h3>
+            <input type="hidden" id="rename-old">
+            <label class="block text-xs text-gray-500 mb-1">Nieuwe naam</label>
+            <input type="text" id="rename-new" class="w-full bg-[#0d1117] border border-[#30363d] p-2 rounded text-white mb-4">
+            <div class="flex justify-end gap-2">
+                <button onclick="document.getElementById('modal-rename').classList.add('hidden')" class="btn btn-gray">Annuleren</button>
+                <button onclick="doRename()" class="btn btn-blue">Opslaan</button>
+            </div>
+        </div>
     </div>
 
     <script>
-        const BASE = window.location.origin;
-        let clients = [];
+        const API = window.location.origin;
 
-        async function load() {
-            const res = await fetch(`${BASE}/dashboard_data`);
-            const data = await res.json();
-            
-            document.getElementById('stat-endpoints').innerText = data.stats.active_endpoints;
-            document.getElementById('stat-clients').innerText = data.stats.known_clients;
-            document.getElementById('stat-calls').innerText = data.stats.total_calls;
-            
-            clients = data.clients;
-            renderClients();
-            fillDropdowns();
-        }
-
-        function renderClients() {
-            const html = clients.map(c => `
-                <tr>
-                    <td class="p-2">${c.description}</td>
-                    <td class="p-2 font-mono text-blue-300">${c.id}</td>
-                    <td class="p-2 text-right">
-                        <button onclick="delClient('${c.id}')" class="text-red-400 font-bold text-xs">VERWIJDER</button>
-                    </td>
-                </tr>
-            `).join('');
-            document.getElementById('clients-list').innerHTML = html;
-        }
-
-        function fillDropdowns() {
-            const opts = clients.map(c => `<option value="${c.id}">${c.description} (${c.id})</option>`).join('');
-            document.getElementById('test-client').innerHTML = opts;
-            document.getElementById('post-client').innerHTML = opts;
-        }
-
-        // --- Actions ---
-
-        document.getElementById('add-client-form').addEventListener('submit', async e => {
-            e.preventDefault();
-            await fetch(`${BASE}/settings`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ description: document.getElementById('new-desc').value })
-            });
-            document.getElementById('new-desc').value = '';
-            load();
-        });
-
-        window.delClient = async id => {
-            if(!confirm('Verwijderen?')) return;
-            await fetch(`${BASE}/settings`, {
-                method: 'DELETE', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ client_id: id })
-            });
-            load();
-        };
-
-        window.doGet = async () => {
-            const id = document.getElementById('test-client').value;
-            const ep = document.getElementById('test-endpoint').value;
+        // --- DATA LOAD ---
+        async function refresh() {
             try {
-                const res = await fetch(`${BASE}/api/${ep}`, { headers: { 'x-client-id': id } });
-                const json = await res.json();
-                document.getElementById('test-res').innerText = JSON.stringify(json, null, 2);
-            } catch(e) { document.getElementById('test-res').innerText = e; }
-        };
+                const res = await fetch(`${API}/api/admin/stats`);
+                const data = await res.json();
+                
+                // Header Stats
+                document.getElementById('stat-size').innerText = data.db_info.data_size_mb;
+                document.getElementById('stat-total').innerText = data.db_info.total_objects;
 
-        document.getElementById('post-form').addEventListener('submit', async e => {
-            e.preventDefault();
-            const id = document.getElementById('post-client').value;
-            const ep = document.getElementById('post-endpoint').value;
-            const body = document.getElementById('post-body').value;
-            const msg = document.getElementById('post-res');
+                // Endpoints Table
+                const epList = document.getElementById('endpoints-list');
+                if(data.endpoints.length === 0) {
+                    epList.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-500">Nog geen data aanwezig</td></tr>';
+                } else {
+                    epList.innerHTML = data.endpoints.map(ep => `
+                        <tr class="hover:bg-[#1c2128]">
+                            <td class="p-3 font-mono text-blue-300">${ep.name}</td>
+                            <td class="p-3">${ep.count}</td>
+                            <td class="p-3 text-right space-x-1">
+                                <button onclick="peek('${ep.name}')" class="btn btn-gray" title="Inspecteren">👁</button>
+                                <button onclick="startRename('${ep.name}')" class="btn btn-gray" title="Hernoemen">✎</button>
+                                <button onclick="download('${ep.name}')" class="btn btn-blue" title="Exporteren">⬇</button>
+                                <button onclick="drop('${ep.name}')" class="btn btn-red" title="Verwijderen">🗑</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+
+                // Client Stats Table
+                const clList = document.getElementById('client-stats-list');
+                clList.innerHTML = data.clients_usage.map(c => `
+                    <tr>
+                        <td class="py-2 text-yellow-500 font-mono">${c.client_id}</td>
+                        <td class="py-2 text-right font-bold">${c.total_records}</td>
+                    </tr>
+                `).join('');
+
+            } catch(e) { console.error(e); }
+        }
+
+        // --- ACTIONS ---
+
+        async function drop(name) {
+            if(!confirm(`WAARSCHUWING: Weet je zeker dat je '${name}' en AL zijn data wilt verwijderen?`)) return;
+            await fetch(`${API}/api/admin/collections/${name}`, { method: 'DELETE' });
+            refresh();
+        }
+
+        async function download(name) {
+            window.location.href = `${API}/api/admin/export/${name}`;
+        }
+
+        function startRename(oldName) {
+            document.getElementById('rename-old').value = oldName;
+            document.getElementById('rename-new').value = oldName;
+            document.getElementById('modal-rename').classList.remove('hidden');
+        }
+
+        async function doRename() {
+            const oldName = document.getElementById('rename-old').value;
+            const newName = document.getElementById('rename-new').value;
             
-            try {
-                const res = await fetch(`${BASE}/api/${ep}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-client-id': id },
-                    body: body
-                });
-                const json = await res.json();
-                msg.innerText = JSON.stringify(json);
-                msg.className = res.ok ? 'mt-4 text-green-400' : 'mt-4 text-red-400';
-                msg.classList.remove('hidden');
-            } catch(e) { alert(e); }
-        });
+            const res = await fetch(`${API}/api/admin/rename`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ old_name: oldName, new_name: newName })
+            });
+            
+            if(res.ok) {
+                document.getElementById('modal-rename').classList.add('hidden');
+                refresh();
+            } else {
+                alert("Fout bij hernoemen (bestaat de nieuwe naam al?)");
+            }
+        }
 
-        window.showTab = t => {
-            ['clients','test','data'].forEach(x => document.getElementById(`tab-${x}`).classList.add('hidden'));
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById(`tab-${t}`).classList.remove('hidden');
-            event.target.classList.add('active');
-        };
+        async function peek(name) {
+            const res = await fetch(`${API}/api/admin/peek/${name}`);
+            const json = await res.json();
+            document.getElementById('peek-name').innerText = name;
+            document.getElementById('peek-content').innerText = JSON.stringify(json, null, 2);
+            document.getElementById('peek-panel').classList.remove('hidden');
+        }
 
-        load();
+        // Init
+        refresh();
     </script>
 </body>
 </html>
