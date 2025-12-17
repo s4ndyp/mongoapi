@@ -16,6 +16,7 @@ MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 def get_db():
     try:
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
+        # Check verbinding
         client.admin.command('ping')
         return client['data_store']
     except Exception as e:
@@ -29,42 +30,43 @@ def get_config(db, col_name):
     return db['_g2_config'].find_one({'_id': col_name}) or {}
 
 def log_activity(db, col_name, client_id, is_error=False, error_msg=None):
-    """Logt activiteit voor Pulse (6), Client Last Seen (9) en Error Log (10)."""
-    now = datetime.datetime.utcnow()
-    
-    # 1. Update Endpoint Activity (voor Traffic Lights)
-    db['_g2_config'].update_one(
-        {'_id': col_name}, 
-        {'$set': {'last_activity': now}}, 
-        upsert=True
-    )
-
-    # 2. Update Client Activity
-    if client_id:
+    """Logt activiteit."""
+    try:
+        now = datetime.datetime.utcnow()
+        # 1. Update Endpoint Activity
         db['_g2_config'].update_one(
-            {'_id': f"client_{client_id}"},
-            {'$set': {'type': 'client_stats', 'last_seen': now, 'client_id': client_id}},
+            {'_id': col_name}, 
+            {'$set': {'last_activity': now}}, 
             upsert=True
         )
-
-    # 3. Log Error if needed
-    if is_error:
-        db['_g2_errors'].insert_one({
-            'timestamp': now,
-            'endpoint': col_name,
-            'client_id': client_id,
-            'error': str(error_msg)
-        })
+        # 2. Update Client Activity
+        if client_id:
+            db['_g2_config'].update_one(
+                {'_id': f"client_{client_id}"},
+                {'$set': {'type': 'client_stats', 'last_seen': now, 'client_id': client_id}},
+                upsert=True
+            )
+        # 3. Log Error
+        if is_error:
+            db['_g2_errors'].insert_one({
+                'timestamp': now,
+                'endpoint': col_name,
+                'client_id': client_id,
+                'error': str(error_msg)
+            })
+    except:
+        pass # Voorkom dat logging de app crasht
 
 def check_lock(f):
-    """(12) Endpoint Lock Middleware."""
+    """Endpoint Lock Middleware."""
     @wraps(f)
     def decorated_function(collection_name, *args, **kwargs):
         if request.method in ['POST', 'PUT', 'DELETE']:
             db = get_db()
-            config = get_config(db, collection_name)
-            if config.get('locked', False):
-                return jsonify({"error": "Endpoint is LOCKED (Read-Only)"}), 403
+            if db is not None:
+                config = get_config(db, collection_name)
+                if config.get('locked', False):
+                    return jsonify({"error": "Endpoint is LOCKED (Read-Only)"}), 403
         return f(collection_name, *args, **kwargs)
     return decorated_function
 
@@ -102,9 +104,9 @@ def clean_incoming_data(data):
 
 @app.route('/api/admin/stats', methods=['GET'])
 def admin_stats():
-    """Verzamelt data voor Dashboard (6, 8, 9, 20)."""
     db = get_db()
-    if not db: return jsonify({'error': 'DB Offline'}), 500
+    # FIX: db is None check
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
 
     cols = db.list_collection_names()
     ignore = ['clients', 'statistics', 'system.indexes', '_g2_config', '_g2_snapshots', '_g2_errors']
@@ -114,19 +116,18 @@ def admin_stats():
     total_records = 0
     client_stats = []
 
-    # Haal configs op (voor locks/last_activity)
     configs = {doc['_id']: doc for doc in db['_g2_config'].find()}
-
-    # Haal DB stats op voor (8) Heatmap
     db_stats = db.command("dbstats")
-    max_size = 1 # avoid div by zero
+    max_size = 1 
     
-    # Pre-calc sizes
     col_sizes = {}
     for c in endpoint_names:
-        s = db.command("collstats", c)['size']
-        col_sizes[c] = s
-        if s > max_size: max_size = s
+        try:
+            s = db.command("collstats", c)['size']
+            col_sizes[c] = s
+            if s > max_size: max_size = s
+        except:
+            col_sizes[c] = 0
 
     for col_name in endpoint_names:
         count = db[col_name].count_documents({})
@@ -139,17 +140,15 @@ def admin_stats():
             'name': col_name, 
             'count': count,
             'owners': db[col_name].distinct('_meta.owner'),
-            'size_pct': (col_sizes[col_name] / max_size) * 100, # (8) Heatmap
-            'last_activity': last_act.isoformat() if last_act else None, # (6, 20) Pulse
-            'locked': conf.get('locked', False), # (12) Lock status
-            'ttl': conf.get('ttl_days', 0) # (11) TTL
+            'size_pct': (col_sizes[col_name] / max_size) * 100,
+            'last_activity': last_act.isoformat() if last_act else None,
+            'locked': conf.get('locked', False),
+            'ttl': conf.get('ttl_days', 0)
         })
 
-    # (9) Client Last Seen
     client_config_docs = db['_g2_config'].find({'type': 'client_stats'})
     c_last_seen_map = {d['client_id']: d.get('last_seen') for d in client_config_docs}
 
-    # Clients usage aggregatie
     usage_map = {}
     for col_name in endpoint_names:
         pipeline = [{"$group": {"_id": "$_meta.owner", "count": {"$sum": 1}}}]
@@ -165,7 +164,6 @@ def admin_stats():
             'last_seen': ls.isoformat() if ls else None
         })
 
-    # (10) Errors (Laatste 10)
     errors = list(db['_g2_errors'].find().sort('timestamp', -1).limit(10))
     formatted_errors = [{
         'time': e['timestamp'].isoformat(),
@@ -185,13 +183,13 @@ def admin_stats():
 
 @app.route('/api/admin/search', methods=['POST'])
 def admin_search():
-    """(3) Deep Search."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     data = request.json
     col = data.get('collection')
     term = data.get('term')
     
-    # Zoek in alle tekstvelden (regex) of op ID
     query = {}
     if term:
         try:
@@ -200,17 +198,24 @@ def admin_search():
                 {"_meta.owner": {"$regex": term, "$options": "i"}}
             ]}
         except:
-            # Als term geen ObjectId is, zoek in values
-            # Dit is een simpele implementatie, voor diepe search op alle velden is een text index beter
-            query = {"$where": f"JSON.stringify(this).indexOf('{term}') != -1"}
+            # Simpele fallback search (voor demo doeleinden)
+            # Voor productie zou je text indexes gebruiken
+            pass 
+
+    # Als query leeg is of faalt, probeer op ID te zoeken als het erop lijkt, anders alles
+    if not query and term:
+         # Laatste poging: is het een ID?
+         try: query = {"_id": ObjectId(term)}
+         except: pass
 
     docs = list(db[col].find(query).limit(50))
     return jsonify(format_doc(docs))
 
 @app.route('/api/admin/bulk_delete', methods=['POST'])
 def admin_bulk_delete():
-    """(4) Bulk Actions."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     data = request.json
     col = data.get('collection')
     ids = data.get('ids', [])
@@ -221,8 +226,9 @@ def admin_bulk_delete():
 
 @app.route('/api/admin/clone', methods=['POST'])
 def admin_clone():
-    """(5) Endpoint Clone."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     data = request.json
     src = data.get('source')
     dest = data.get('destination')
@@ -233,8 +239,9 @@ def admin_clone():
 
 @app.route('/api/admin/settings', methods=['POST'])
 def admin_settings():
-    """(11, 12) Update Lock & TTL."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     data = request.json
     col = data.get('collection')
     
@@ -247,8 +254,9 @@ def admin_settings():
 
 @app.route('/api/admin/cleanup', methods=['POST'])
 def admin_cleanup():
-    """(11) Voert TTL opschoning uit."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     configs = db['_g2_config'].find({'ttl_days': {'$gt': 0}})
     report = []
     
@@ -257,7 +265,7 @@ def admin_cleanup():
         col_name = conf['_id']
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
         
-        # Verwijder op basis van created_at
+        # Verwijder op basis van created_at in _meta
         res = db[col_name].delete_many({'_meta.created_at': {'$lt': cutoff}})
         if res.deleted_count > 0:
             report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
@@ -266,17 +274,16 @@ def admin_cleanup():
 
 @app.route('/api/admin/snapshot', methods=['POST'])
 def admin_snapshot():
-    """(14) Maak Snapshot."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     data = request.json
     col = data.get('collection')
     snap_name = f"{col}_snap_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    # Kopieer naar snapshot collectie
     pipeline = [{"$match": {}}, {"$out": snap_name}]
     db[col].aggregate(pipeline)
     
-    # Log in snapshots lijst
     db['_g2_snapshots'].insert_one({
         'original': col,
         'snapshot_name': snap_name,
@@ -286,24 +293,18 @@ def admin_snapshot():
 
 @app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT'])
 def admin_update_record(col_name, doc_id):
-    """(1) JSON Editor Save."""
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
     try:
-        # Hier accepteren we ruwe updates van de admin editor
-        # We halen het binnenkomende object uit elkaar om meta te beschermen indien nodig
-        # Maar als ADMIN mag je eigenlijk alles aanpassen.
-        # Voor veiligheid: we respecteren de container structuur
         new_doc = request.json
         
-        # Vertaal terug van plat (client view) naar container (db view)
-        # 1. Haal _meta velden eruit
         meta = {
             'owner': new_doc.get('_client_id'),
             'created_at': datetime.datetime.fromisoformat(new_doc.get('_created_at')) if new_doc.get('_created_at') else None,
             'updated_at': datetime.datetime.utcnow()
         }
         
-        # 2. Schoon data op (verwijder _ velden)
         data = clean_incoming_data(new_doc)
         data['_meta'] = meta
         
@@ -312,31 +313,44 @@ def admin_update_record(col_name, doc_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# Bestaande admin routes (rename, delete, export...) blijven hieronder...
-# [IK HEB DEZE INGEKORT VOOR LEESBAARHEID, ZE ZIJN HETZELFDE ALS VOORHEEN]
+# Legacy Admin Routes (FIXED checks)
 @app.route('/api/admin/rename', methods=['POST'])
 def admin_rename():
     db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
     d = request.json
     try: db[d['old_name']].rename(d['new_name']); return jsonify({"status":"ok"})
     except Exception as e: return jsonify({"error":str(e)}),400
 
 @app.route('/api/admin/collections/<name>', methods=['DELETE'])
 def admin_del_col(name):
-    get_db()[name].drop(); return jsonify({"status":"deleted"})
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    db[name].drop(); return jsonify({"status":"deleted"})
 
 @app.route('/api/admin/export/<name>', methods=['GET'])
 def admin_exp(name):
-    d = list(get_db()[name].find({})); return Response(json.dumps(format_doc(d), default=str), mimetype="application/json", headers={"Content-Disposition":f"attachment;filename={name}.json"})
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    d = list(db[name].find({}))
+    return Response(json.dumps(format_doc(d), default=str), mimetype="application/json", headers={"Content-Disposition":f"attachment;filename={name}.json"})
 
-# --- GATEWAY ROUTES (Met Logging & Locking) ---
+@app.route('/api/admin/peek/<name>', methods=['GET'])
+def admin_peek(name):
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    d = list(db[name].find({}).sort('_id', -1).limit(5))
+    return jsonify(format_doc(d))
+
+# --- GATEWAY ROUTES ---
 
 @app.route('/api/<collection_name>', methods=['GET', 'POST'])
 @require_client_id
-@check_lock # (12)
+@check_lock
 def api_collection(collection_name):
     db = get_db()
-    if not db: return jsonify({"error": "DB Offline"}), 503
+    # FIX: db is None check
+    if db is None: return jsonify({"error": "DB Offline"}), 503
     
     try:
         if request.method == 'GET':
@@ -358,10 +372,11 @@ def api_collection(collection_name):
 
 @app.route('/api/<collection_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
 @require_client_id
-@check_lock # (12)
+@check_lock
 def api_document(collection_name, doc_id):
     db = get_db()
-    if not db: return jsonify({"error": "DB Offline"}), 503
+    # FIX: db is None check
+    if db is None: return jsonify({"error": "DB Offline"}), 503
     
     try:
         try: q_id = ObjectId(doc_id)
