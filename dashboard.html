@@ -12,7 +12,6 @@
     <link rel="stylesheet" href="app_styles.css">
 
     <style>
-        :root { --color-primary: 99 102 241; }
         .main-layout { display: grid; grid-template-columns: 250px 500px 1fr; height: 100vh; }
         .col-scroll { overflow-y: auto; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
@@ -22,7 +21,6 @@
         .size-bar { height: 3px; background: rgba(255,255,255,0.1); margin-top: 8px; width: 100%; border-radius: 2px; overflow: hidden; }
         .size-fill { height: 100%; background: rgb(var(--color-primary)); }
         textarea.editor { font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.5; outline: none; resize: none; }
-        /* Verborgen file input */
         #import-input { display: none; }
     </style>
 </head>
@@ -37,7 +35,7 @@
                 <h1 class="font-bold text-white text-xl tracking-tight"><i class="fas fa-server mr-2 text-primary"></i> G2 Admin</h1>
                 <div class="flex justify-between text-xs text-gray-500 mt-2 font-mono">
                     <span id="stat-db-size">- MB</span>
-                    <button onclick="runCleanup()" class="text-primary hover:text-white transition-colors" title="Run TTL Cleanup">
+                    <button onclick="runCleanup()" class="text-primary hover:text-white transition-colors">
                         <i class="fas fa-broom"></i> Clean
                     </button>
                 </div>
@@ -52,18 +50,15 @@
                         <span id="count-all" class="bg-gray-700/50 text-gray-300 text-xs px-2 py-0.5 rounded-full">0</span>
                     </div>
                 </div>
-
                 <div>
                     <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Applicaties</div>
                     <div id="list-apps" class="space-y-1"></div>
                 </div>
-
                 <div>
                     <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Clients</div>
                     <div id="list-users" class="space-y-1"></div>
                 </div>
             </div>
-            
             <div class="mt-auto border-t border-gray-700/50 p-4">
                 <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Error Log</div>
                 <div id="list-errors" class="space-y-2 text-xs font-mono text-red-400 opacity-80"></div>
@@ -113,14 +108,18 @@
                         <button onclick="triggerImport()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
                             <i class="fas fa-file-import"></i> Import
                         </button>
-
                         <button onclick="downloadEndpoint()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
                             <i class="fas fa-download"></i> Export
                         </button>
+                        
+                        <div class="flex-grow"></div>
+                        
                         <button onclick="doClone()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
                             <i class="fas fa-copy"></i> Dupliceer
                         </button>
-                        <div class="flex-grow"></div>
+                        <button onclick="truncateEndpoint()" class="bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                            <i class="fas fa-eraser"></i> Wissen
+                        </button>
                         <button onclick="dropEndpoint()" class="bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
                             <i class="fas fa-trash-alt"></i> Verwijder
                         </button>
@@ -152,7 +151,7 @@
                         <div class="w-1/3 flex flex-col gap-2 overflow-y-auto pr-2 custom-scrollbar" id="search-results">
                             <div class="text-xs text-gray-500 text-center mt-10 p-4 border border-dashed border-gray-700 rounded-lg">
                                 <i class="fas fa-search mb-2 text-lg opacity-50"></i><br>
-                                Voer een zoekopdracht uit...
+                                Zoek of klik refresh voor preview...
                             </div>
                         </div>
 
@@ -168,7 +167,7 @@
                             <textarea id="json-editor" class="editor flex-grow bg-dark_paper text-gray-300 p-4 hidden"></textarea>
                             <div id="editor-placeholder" class="flex flex-col items-center justify-center h-full text-gray-600 text-sm p-10">
                                 <i class="fas fa-mouse-pointer mb-3 text-2xl opacity-30"></i>
-                                Selecteer een record links om te bewerken
+                                Selecteer een record links
                             </div>
                         </div>
                     </div>
@@ -182,15 +181,14 @@
                             </div>
                             <div class="flex-grow">
                                 <h3 class="font-bold text-white">Endpoint Lock</h3>
-                                <p class="text-xs text-gray-500 mt-1">Read-Only modus. Blokkeert POST/PUT/DELETE.</p>
+                                <p class="text-xs text-gray-500 mt-1">Blokkeer schrijven (Read-Only).</p>
                             </div>
                             <label class="relative inline-flex items-center cursor-pointer">
                                 <input type="checkbox" id="set-locked" class="sr-only peer">
-                                <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                                <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-red-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
                             </label>
                         </div>
                     </div>
-
                     <div class="bg-dark_paper border border-gray-700 rounded-xl p-6 shadow-sm">
                         <div class="flex items-center gap-4">
                             <div class="bg-blue-500/10 p-3 rounded-lg text-blue-500">
@@ -198,7 +196,7 @@
                             </div>
                             <div class="flex-grow">
                                 <h3 class="font-bold text-white">Time To Live (TTL)</h3>
-                                <p class="text-xs text-gray-500 mt-1">Automatisch verwijderen na X dagen.</p>
+                                <p class="text-xs text-gray-500 mt-1">Verwijder data na X dagen.</p>
                             </div>
                             <div class="flex items-center gap-2">
                                 <input type="number" id="set-ttl" class="bg-dark border border-gray-600 rounded-lg p-2 text-white w-20 text-center focus:border-primary outline-none" placeholder="0">
@@ -206,7 +204,6 @@
                             </div>
                         </div>
                     </div>
-                    
                     <button onclick="saveSettings()" class="w-full bg-primary hover:opacity-90 text-white py-3 rounded-xl font-bold shadow-lg shadow-primary/20 transition-all">
                         Instellingen Opslaan
                     </button>
@@ -327,7 +324,6 @@
             document.getElementById('detail-placeholder').classList.add('hidden');
             document.getElementById('detail-content').classList.remove('hidden');
             
-            // Reset Editor
             document.getElementById('json-editor').classList.add('hidden');
             document.getElementById('editor-placeholder').classList.remove('hidden');
             document.getElementById('editor-actions').classList.add('hidden');
@@ -406,6 +402,58 @@
             } catch(e) { alert("Ongeldige JSON"); }
         }
 
+        // --- IMPORT LOGICA ---
+        function triggerImport() { document.getElementById('import-input').click(); }
+
+        async function handleImportFile() {
+            const input = document.getElementById('import-input');
+            const file = input.files[0];
+            if(!file) return;
+
+            // Bepaal default owner op basis van filter
+            let defaultOwner = 'ADMIN_IMPORT';
+            if(currentFilter.type === 'USER') defaultOwner = currentFilter.value;
+
+            // Vraag om bevestiging en Target Owner
+            const targetOwner = prompt(`Importeer ${file.name} in '${currentEp}'.\n\nWelke Client ID moet eigenaar worden?`, defaultOwner);
+            if(!targetOwner) { input.value = ''; return; }
+
+            const clearFirst = confirm("Wil je eerst alle BESTAANDE data in dit endpoint wissen? (Truncate)");
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    if(!Array.isArray(json)) throw new Error("JSON moet een lijst zijn ([])");
+
+                    const res = await fetch(`${API}/api/admin/import`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ 
+                            collection: currentEp, 
+                            records: json,
+                            owner: targetOwner,
+                            clear_first: clearFirst
+                        })
+                    });
+                    
+                    const d = await res.json();
+                    if(res.ok) {
+                        alert(`Succes! ${d.count} records geïmporteerd voor '${targetOwner}'.`);
+                        refresh();
+                        doSearch(); 
+                    } else {
+                        alert("Fout: " + d.error);
+                    }
+                } catch(err) {
+                    alert("Fout bestand: " + err.message);
+                }
+                input.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        // --- TOOLS ---
         async function renameEndpoint() {
             const newName = prompt("Nieuwe naam:", currentEp);
             if(newName && newName !== currentEp) {
@@ -418,8 +466,21 @@
             }
         }
 
+        async function truncateEndpoint() {
+            if(confirm(`⚠️ LET OP: Dit wist ALLE data in '${currentEp}', maar het endpoint blijft bestaan.\n\nWeet je het zeker?`)) {
+                const res = await fetch(`${API}/api/admin/clear`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ collection: currentEp })
+                });
+                const d = await res.json();
+                alert(`${d.deleted} records gewist.`);
+                refresh();
+                doSearch();
+            }
+        }
+
         async function dropEndpoint() {
-            if(confirm(`Weet je zeker dat je ${currentEp} wilt verwijderen?`)) {
+            if(confirm(`⛔️ GEVAAR: '${currentEp}' wordt VOLLEDIG verwijderd.\n\nDoorgaan?`)) {
                 await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' });
                 window.location.reload();
             }
@@ -453,47 +514,6 @@
             const res = await fetch(`${API}/api/admin/cleanup`, { method: 'POST' });
             const d = await res.json();
             alert(d.report.length ? d.report.join('\n') : "Alles is schoon.");
-        }
-
-        // --- IMPORT LOGICA (NIEUW) ---
-        function triggerImport() {
-            document.getElementById('import-input').click();
-        }
-
-        async function handleImportFile() {
-            const input = document.getElementById('import-input');
-            const file = input.files[0];
-            if(!file) return;
-
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                try {
-                    const json = JSON.parse(e.target.result);
-                    if(!Array.isArray(json)) throw new Error("Bestand moet een JSON lijst ([...]) zijn");
-
-                    if(!confirm(`Wil je ${json.length} records importeren in '${currentEp}'?`)) return;
-
-                    const res = await fetch(`${API}/api/admin/import`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ collection: currentEp, records: json })
-                    });
-                    
-                    const d = await res.json();
-                    if(res.ok) {
-                        alert(`Succes! ${d.count} records geïmporteerd.`);
-                        refresh();
-                        doSearch(); // Ververs data view als die open staat
-                    } else {
-                        alert("Fout bij import: " + d.error);
-                    }
-                } catch(err) {
-                    alert("Ongeldig bestand: " + err.message);
-                }
-                // Reset input zodat je hetzelfde bestand nog eens kunt kiezen indien nodig
-                input.value = '';
-            };
-            reader.readAsText(file);
         }
 
         function renderErrorLog() {
