@@ -3,964 +3,192 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>G2 API Dashboard</title>
-    <!-- Laad Tailwind CSS -->
+    <title>G2 Proxy Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Iconen: Lucide Icons -->
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #0d1117; /* Dark Background */
-            color: #c9d1d9; /* Light Text */
-            min-height: 100vh;
-        }
-        .card {
-            background-color: #161b22; /* Darker Card */
-            border-radius: 0.5rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-            border: 1px solid #30363d;
-        }
-        .btn-primary {
-            background-color: #238636; /* GitHub Green */
-            color: white;
-            transition: background-color 0.15s;
-        }
-        .btn-primary:hover {
-            background-color: #2ea043; 
-        }
-        .btn-danger {
-            background-color: #da3633; /* GitHub Red */
-            color: white;
-            transition: background-color 0.15s;
-        }
-        .btn-danger:hover {
-            background-color: #f85149; 
-        }
-        .btn-warning {
-            background-color: #9a6700; /* Dark Yellow */
-            color: white;
-            transition: background-color 0.15s;
-        }
-        .btn-warning:hover {
-            background-color: #b0880f;
-        }
-        input, textarea, select {
-            background-color: #0d1117 !important;
-            border-color: #30363d !important;
-            color: #c9d1d9 !important;
-        }
-        .tab-btn {
-            padding: 0.5rem 1rem;
-            border-bottom: 2px solid transparent;
-            cursor: pointer;
-        }
-        .tab-btn.active {
-            border-bottom-color: #238636;
-            color: #58a6ff; /* GitHub Blue */
-            font-weight: 600;
-        }
-        .table thead th {
-            color: #8b949e; /* Gray header text */
-        }
-        /* Custom scrollbar for better look */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #30363d;
-            border-radius: 10px;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0d1117; color: #c9d1d9; }
+        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 0.5rem; }
+        .btn-primary { background-color: #238636; color: white; }
+        .btn-primary:hover { background-color: #2ea043; }
+        input, select, textarea { background-color: #0d1117 !important; border-color: #30363d !important; color: white !important; }
+        .tab-btn { padding: 0.5rem 1rem; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab-btn.active { border-color: #238636; color: #58a6ff; font-weight: bold; }
     </style>
 </head>
-<body class="flex flex-col">
+<body class="p-6 max-w-7xl mx-auto flex flex-col gap-6">
 
-    <div id="app" class="flex-grow">
-        <!-- Login Scherm -->
-        <div id="login-screen" class="min-h-screen flex items-center justify-center bg-gray-900">
-            <div class="card p-8 w-full max-w-md">
-                <h2 class="text-3xl font-bold mb-6 text-center text-green-400">API Dashboard Login</h2>
-                <div id="login-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
-                <form id="login-form" class="space-y-4">
-                    <div>
-                        <label for="username" class="block text-sm font-medium text-gray-400">Gebruikersnaam</label>
-                        <input type="text" id="username" value="admin" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500">
-                    </div>
-                    <div>
-                        <label for="password" class="block text-sm font-medium text-gray-400">Wachtwoord</label>
-                        <input type="password" id="password" value="[admin-wachtwoord]" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500">
-                    </div>
-                    <button type="submit" class="btn-primary w-full py-2 px-4 rounded-md font-semibold">Inloggen</button>
-                </form>
-            </div>
+    <header class="flex justify-between items-center pb-4 border-b border-[#30363d]">
+        <h1 class="text-2xl font-bold text-green-400">G2 Gateway (Trusted Mode)</h1>
+        <div class="text-xs text-gray-500">Security managed by Reverse Proxy</div>
+    </header>
+
+    <div class="grid grid-cols-3 gap-6">
+        <div class="card p-4 border-l-4 border-green-500">
+            <div class="text-gray-400 text-sm">Actieve Endpoints</div>
+            <div id="stat-endpoints" class="text-2xl font-bold">-</div>
         </div>
-
-        <!-- Dashboard Scherm -->
-        <div id="dashboard-screen" class="hidden">
-            <header class="bg-[#161b22] text-white p-4 shadow-md border-b border-[#30363d]">
-                <div class="max-w-7xl mx-auto flex justify-between items-center">
-                    <h1 class="text-2xl font-bold text-green-400">G2 API Beheerpaneel</h1>
-                    <div class="flex items-center space-x-4">
-                        <span id="user-display" class="text-sm font-medium text-gray-400"></span>
-                        <button id="logout-btn" class="text-sm py-1 px-3 btn-danger rounded font-medium">Uitloggen</button>
-                    </div>
-                </div>
-            </header>
-
-            <main class="max-w-7xl mx-auto p-6 space-y-8">
-                
-                <!-- Statistieken Overzicht -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="card p-6 border-l-4 border-green-500">
-                        <p class="text-sm text-gray-400">Actieve Endpoints</p>
-                        <p id="stat-endpoints" class="text-3xl font-bold text-gray-200 mt-1">...</p>
-                    </div>
-                    <div class="card p-6 border-l-4 border-blue-500">
-                        <p class="text-sm text-gray-400">Geregistreerde Clients</p>
-                        <p id="stat-clients" class="text-3xl font-bold text-gray-200 mt-1">...</p>
-                    </div>
-                    <div class="card p-6 border-l-4 border-yellow-500">
-                        <p class="text-sm text-gray-400">Totaal API Calls</p>
-                        <p id="stat-calls" class="text-3xl font-bold text-gray-200 mt-1">...</p>
-                    </div>
-                </div>
-
-                <!-- Tab Navigatie -->
-                <div class="flex border-b border-[#30363d] space-x-4">
-                    <button id="tab-api-keys" class="tab-btn active" data-tab="keys">API Sleutels & Beheer</button>
-                    <button id="tab-api-test" class="tab-btn" data-tab="api-test">API Client Test</button>
-                    <button id="tab-old-endpoints" class="tab-btn" data-tab="old-endpoints">Collecties & Migratie</button>
-                    <button id="tab-activity" class="tab-btn" data-tab="activity">Activiteit</button>
-                    <button id="tab-profile" class="tab-btn" data-tab="profile">Profiel</button>
-                </div>
-
-                <!-- Tab Content -->
-                <div id="tab-content" class="space-y-6">
-
-                    <!-- 1. API Sleutels & Beheer (Keys Tab) -->
-                    <div id="content-keys" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div class="card p-6 lg:col-span-3">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Client Authenticatie Beheer</h3>
-                            <div id="settings-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
-
-                            <form id="generate-key-form" class="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3 mb-6">
-                                <input type="text" id="new-key-desc" placeholder="Beschrijving (bijv. 'Frontend App')" required class="flex-grow px-3 py-2 border border-gray-700 rounded-md shadow-sm">
-                                <button type="submit" class="btn-primary py-2 px-4 rounded-md font-semibold">Genereer Nieuwe Sleutel</button>
-                            </form>
-
-                            <div class="overflow-x-auto">
-                                <table class="min-w-full divide-y divide-gray-700 table">
-                                    <thead>
-                                        <tr>
-                                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider w-1/4">Beschrijving</th>
-                                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider w-1/4">Client ID</th>
-                                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider w-1/2">API Key</th>
-                                            <th class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider">Acties</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="api-keys-table" class="bg-[#161b22] divide-y divide-gray-800">
-                                        <!-- Key rijen worden hier geladen door JS -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 2. API Client Test (GET met Client ID/Key) -->
-                    <div id="content-api-test" class="hidden">
-                         <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-blue-400">Universele API Client Test (GET)</h3>
-                            <p class="text-sm text-gray-400 mb-4">Voert een **GET**-aanvraag uit op de beveiligde universele route, geautoriseerd met de geselecteerde Client ID en API Key.</p>
-                            
-                            <div class="space-y-4">
-                                <div class="flex space-x-4">
-                                    <div class="flex-grow">
-                                        <label for="test-client-id" class="block text-sm font-medium text-gray-400">Selecteer Client ID (voor autorisatie)</label>
-                                        <select id="test-client-id" class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm" required>
-                                            <option value="">-- Selecteer een Client ID --</option>
-                                        </select>
-                                        <div id="test-selected-client-key" class="mt-2 p-2 bg-[#0d1117] border border-gray-700 rounded text-xs font-mono hidden"></div>
-                                    </div>
-                                </div>
-                                
-                                <div class="flex space-x-3 items-end">
-                                    <div class="flex-grow">
-                                        <label for="test-endpoint-path" class="block text-sm font-medium text-gray-400">Endpoint Pad</label>
-                                        <div class="flex items-center">
-                                            <span class="text-gray-400 mr-2 text-lg font-mono">/api/</span>
-                                            <input type="text" id="test-endpoint-path" placeholder="bijv. users of users/document_id" value="test_data" class="flex-grow px-3 py-2 border border-gray-700 rounded-md shadow-sm">
-                                        </div>
-                                    </div>
-                                    <button id="execute-client-test-btn" class="btn-primary py-2 px-4 rounded-md font-semibold flex-shrink-0">GET Uitvoeren</button>
-                                </div>
-                            </div>
-                            
-                            <div id="test-message" class="p-3 mb-4 mt-4 rounded-lg text-sm hidden"></div>
-
-                            <div class="mt-4">
-                                <p class="text-sm font-medium mb-1">Respons:</p>
-                                <pre id="test-response-pre" class="bg-gray-900 p-3 rounded-lg overflow-x-auto text-sm font-mono max-h-96">Resultaat verschijnt hier...</pre>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 3. Collecties & Migratie (Collecties Tab) -->
-                    <div id="content-old-endpoints" class="hidden">
-                        <div class="card p-6 mb-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Nieuwe Collectie Aanmaken (Endpoint POST)</h3>
-                            <p class="text-sm text-gray-400 mb-4">Om een nieuwe collectie aan te maken via de universele route, dient u een Client ID en de bijbehorende API Key te gebruiken.</p>
-
-                            <form id="create-endpoint-form" class="space-y-4">
-                                <div id="key-selection-container">
-                                    <label for="post-client-id" class="block text-sm font-medium text-gray-400">Selecteer Client ID (voor autorisatie)</label>
-                                    <select id="post-client-id" class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm" required>
-                                        <option value="">-- Selecteer een Client ID --</option>
-                                    </select>
-                                    <div id="selected-client-key" class="mt-2 p-2 bg-[#0d1117] border border-gray-700 rounded text-xs font-mono hidden"></div>
-                                </div>
-                                
-                                <label for="new-endpoint-name" class="block text-sm font-medium text-gray-400">Nieuwe Collectienaam (URL-pad na /api/)</label>
-                                <input type="text" id="new-endpoint-name" placeholder="bijv. my_new_endpoint" required class="w-full px-3 py-2 border border-gray-700 rounded-md shadow-sm">
-                                
-                                <label for="initial-data" class="block text-sm font-medium text-gray-400">Initieel Document (JSON)</label>
-                                <textarea id="initial-data" rows="4" class="w-full p-2 border border-gray-700 rounded-md font-mono text-xs" required>
-{
-    "created_by": "admin",
-    "description": "Initial placeholder document."
-}
-</textarea>
-                                <div id="create-endpoint-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
-                                <button type="submit" class="btn-primary py-2 px-4 rounded-md font-semibold w-full">Endpoint Aanmaken (POST)</button>
-                            </form>
-                        </div>
-                        
-                        <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-yellow-500">Overzicht Collectie Status & Migratie</h3>
-                            <div id="scan-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
-
-                            <table class="min-w-full divide-y divide-gray-700 table">
-                                <thead>
-                                    <tr>
-                                        <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider">Collectie Naam</th>
-                                        <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider">Totaal Docs</th>
-                                        <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider">Wees Docs (Mankende `client_id`)</th>
-                                        <th class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider">Actie</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="collection-scan-table" class="bg-[#161b22] divide-y divide-gray-800">
-                                    <tr><td colspan="4" class="p-4 text-center text-gray-500">Bezig met scannen...</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        
-                        <!-- NIEUW: Ruwe Scan Output voor Debugging -->
-                        <div class="card p-6 mt-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-red-400">DEBUG: Ruwe Scan Output</h3>
-                            <p class="text-sm text-gray-400 mb-4">Gebruik deze knop om de onbewerkte JSON te zien die de backend terugstuurt, inclusief collecties en tellingen. Dit helpt bij het debuggen van ontbrekende endpoints.</p>
-                            <button id="execute-raw-scan-btn" class="btn-danger py-2 px-4 rounded-md font-semibold">Voer Ruwe Scan Uit (Toon JSON)</button>
-                            <div class="mt-4">
-                                <pre id="raw-scan-response-pre" class="bg-gray-900 p-3 rounded-lg overflow-x-auto text-sm font-mono max-h-96 mt-3">Klik op de knop om de ruwe JSON van /api/collections/scan te laden...</pre>
-                            </div>
-                        </div>
-                        <!-- EINDE NIEUW -->
-
-                    </div>
-
-                    <!-- 4. Activiteit (Activity Tab) -->
-                    <div id="content-activity" class="hidden">
-                        <div class="card p-6">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Recente API Activiteit</h3>
-                            <ul id="activity-list" class="space-y-3 text-sm max-h-96 overflow-y-auto pr-2">
-                                <!-- Activiteit wordt hier geladen door JS -->
-                            </ul>
-                        </div>
-                    </div>
-                    
-                    <!-- 5. Profiel Wijzigen (Profile Tab) -->
-                    <div id="content-profile" class="hidden">
-                        <div class="card p-6 w-full max-w-lg mx-auto">
-                            <h3 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Admin Profiel Wijzigen</h3>
-                            <div id="profile-message" class="p-3 mb-4 rounded-lg text-sm hidden"></div>
-                            
-                            <form id="profile-form" class="space-y-4">
-                                <div>
-                                    <label for="current-username" class="block text-sm font-medium text-gray-400">Huidige Gebruikersnaam</label>
-                                    <input type="text" id="current-username" readonly class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-gray-400 cursor-not-allowed">
-                                </div>
-                                
-                                <div>
-                                    <label for="new-profile-username" class="block text-sm font-medium text-gray-400">Nieuwe Gebruikersnaam (Optioneel)</label>
-                                    <input type="text" id="new-profile-username" placeholder="Laat leeg om niet te wijzigen" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md">
-                                </div>
-                                
-                                <div>
-                                    <label for="new-profile-password" class="block text-sm font-medium text-gray-400">Nieuw Wachtwoord (Optioneel, min. 8 tekens)</label>
-                                    <input type="password" id="new-profile-password" placeholder="Laat leeg om niet te wijzigen" class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md">
-                                </div>
-
-                                <div>
-                                    <label for="old-profile-password" class="block text-sm font-medium text-gray-400">Bevestig Huidig Wachtwoord (Verplicht)</label>
-                                    <input type="password" id="old-profile-password" required class="mt-1 block w-full px-3 py-2 border border-gray-700 rounded-md">
-                                </div>
-
-                                <button type="submit" class="btn-primary w-full py-2 px-4 rounded-md font-semibold">Profiel Opslaan</button>
-                            </form>
-                        </div>
-                    </div>
-
-                </div>
-
-            </main>
+        <div class="card p-4 border-l-4 border-blue-500">
+            <div class="text-gray-400 text-sm">Geregistreerde Clients</div>
+            <div id="stat-clients" class="text-2xl font-bold">-</div>
+        </div>
+        <div class="card p-4 border-l-4 border-yellow-500">
+            <div class="text-gray-400 text-sm">Totaal Requests</div>
+            <div id="stat-calls" class="text-2xl font-bold">-</div>
         </div>
     </div>
 
+    <div class="flex space-x-4 border-b border-[#30363d]">
+        <button class="tab-btn active" onclick="showTab('clients')">Clients</button>
+        <button class="tab-btn" onclick="showTab('test')">API Test</button>
+        <button class="tab-btn" onclick="showTab('data')">Data Invoer</button>
+    </div>
+
+    <div id="app-content">
+        
+        <div id="tab-clients" class="block">
+            <div class="card p-6 mt-4">
+                <h2 class="text-lg font-bold mb-4">Client Beheer</h2>
+                <form id="add-client-form" class="flex gap-4 mb-6">
+                    <input type="text" id="new-desc" placeholder="Naam (bijv. Klant A)" class="flex-grow border rounded p-2" required>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded">Toevoegen</button>
+                </form>
+                <table class="w-full text-left text-sm">
+                    <thead><tr class="text-gray-500 border-b border-gray-700">
+                        <th class="p-2">Beschrijving</th>
+                        <th class="p-2">Client ID (Header)</th>
+                        <th class="p-2 text-right">Actie</th>
+                    </tr></thead>
+                    <tbody id="clients-list" class="divide-y divide-gray-800"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-test" class="hidden">
+            <div class="card p-6 mt-4">
+                <h2 class="text-lg font-bold mb-4 text-blue-400">GET Request Test</h2>
+                <div class="space-y-4">
+                    <select id="test-client" class="w-full border rounded p-2"></select>
+                    <div class="flex gap-2 items-center">
+                        <span class="font-mono">/api/</span>
+                        <input id="test-endpoint" type="text" placeholder="collectie" class="flex-grow border rounded p-2">
+                        <button onclick="doGet()" class="btn-primary px-4 py-2 rounded">GET</button>
+                    </div>
+                    <pre id="test-res" class="bg-black p-4 rounded text-xs font-mono min-h-[100px] overflow-auto">Resultaat...</pre>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-data" class="hidden">
+            <div class="card p-6 mt-4">
+                <h2 class="text-lg font-bold mb-4 text-green-400">POST Data</h2>
+                <form id="post-form" class="space-y-4">
+                    <select id="post-client" class="w-full border rounded p-2"></select>
+                    <input id="post-endpoint" type="text" placeholder="Collectie (bijv. orders)" class="w-full border rounded p-2" required>
+                    <textarea id="post-body" rows="4" class="w-full border rounded p-2 font-mono text-sm">{"item": "voorbeeld"}</textarea>
+                    <button type="submit" class="btn-primary w-full py-2 rounded">Verstuur</button>
+                </form>
+                <div id="post-res" class="mt-4 text-sm hidden"></div>
+            </div>
+        </div>
+
+    </div>
+
     <script>
-        // FIX: Gebruik een relatieve URL /api
-        const API_BASE_URL = '/api'; 
-        
-        // --- DOM Selectors ---
-        const loginScreen = document.getElementById('login-screen');
-        const dashboardScreen = document.getElementById('dashboard-screen');
-        const loginForm = document.getElementById('login-form');
-        const loginMessage = document.getElementById('login-message');
-        const logoutBtn = document.getElementById('logout-btn');
-        const userDisplay = document.getElementById('user-display');
-        const statEndpoints = document.getElementById('stat-endpoints');
-        const statClients = document.getElementById('stat-clients');
-        const statCalls = document.getElementById('stat-calls');
-        const apiKeysTable = document.getElementById('api-keys-table');
-        const generateKeyForm = document.getElementById('generate-key-form');
-        const settingsMessage = document.getElementById('settings-message');
-        const activityList = document.getElementById('activity-list');
-        
-        // Elementen voor API Test
-        const testClientSelect = document.getElementById('test-client-id');
-        const testClientKeyDiv = document.getElementById('test-selected-client-key');
-        const testEndpointPathInput = document.getElementById('test-endpoint-path');
-        const executeClientTestBtn = document.getElementById('execute-client-test-btn');
-        const testResponseMessage = document.getElementById('test-message');
-        const testResponsePre = document.getElementById('test-response-pre');
-        
-        // Elementen voor Endpoint Creation
-        const createEndpointForm = document.getElementById('create-endpoint-form');
-        const createEndpointMessage = document.getElementById('create-endpoint-message');
-        const newEndpointNameInput = document.getElementById('new-endpoint-name');
-        const initialDataTextarea = document.getElementById('initial-data');
-        const postClientIdSelect = document.getElementById('post-client-id');
-        const selectedClientKeyDiv = document.getElementById('selected-client-key');
-        
-        // Elementen voor Scan/Conversie
-        const collectionScanTable = document.getElementById('collection-scan-table');
-        const scanMessage = document.getElementById('scan-message');
-        
-        // NIEUW: Elementen voor Ruwe Debug Scan
-        const executeRawScanBtn = document.getElementById('execute-raw-scan-btn');
-        const rawScanResponsePre = document.getElementById('raw-scan-response-pre');
-        
-        // Elementen voor Profiel
-        const profileForm = document.getElementById('profile-form');
-        const currentUsernameInput = document.getElementById('current-username');
-        const newProfileUsernameInput = document.getElementById('new-profile-username');
-        const newProfilePasswordInput = document.getElementById('new-profile-password');
-        const oldProfilePasswordInput = document.getElementById('old-profile-password');
-        const profileMessage = document.getElementById('profile-message');
+        const BASE = window.location.origin;
+        let clients = [];
 
-
-        let currentUserId = null;
-        let activeClientKeys = []; // Array om keys lokaal op te slaan (inclusief keys)
-
-        // --- Hulpfuncties ---
-        function showMessage(element, text, isError = false) {
-            element.textContent = text;
-            element.className = `p-3 mb-4 rounded-lg text-sm ${isError ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'}`;
-            element.style.display = 'block';
+        async function load() {
+            const res = await fetch(`${BASE}/dashboard_data`);
+            const data = await res.json();
+            
+            document.getElementById('stat-endpoints').innerText = data.stats.active_endpoints;
+            document.getElementById('stat-clients').innerText = data.stats.known_clients;
+            document.getElementById('stat-calls').innerText = data.stats.total_calls;
+            
+            clients = data.clients;
+            renderClients();
+            fillDropdowns();
         }
 
-        function hideMessage(element) {
-            element.style.display = 'none';
-        }
-
-        function toggleScreens(isLoggedIn) {
-            if (isLoggedIn) {
-                loginScreen.classList.add('hidden');
-                dashboardScreen.classList.remove('hidden');
-            } else {
-                loginScreen.classList.remove('hidden');
-                dashboardScreen.classList.add('hidden');
-            }
-        }
-        
-        // --- Tab Handlers ---
-        document.querySelectorAll('.tab-btn').forEach(button => {
-            button.addEventListener('click', () => {
-                const tab = button.getAttribute('data-tab');
-                // Deactiveer alle knoppen en verberg alle content
-                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-                document.querySelectorAll('#tab-content > div').forEach(content => content.classList.add('hidden'));
-
-                // Activeer de geklikte knop en toon de content
-                button.classList.add('active');
-                document.getElementById(`content-${tab}`).classList.remove('hidden');
-
-                // Speciale actie voor scan/profiel
-                if (tab === 'old-endpoints') {
-                    loadCollectionScan();
-                }
-                if (tab === 'profile') {
-                    loadAdminProfile();
-                }
-            });
-        });
-
-        // --- Fetch Functie ---
-        async function safeFetch(path, options = {}) { 
-            const url = `${API_BASE_URL}${path}`;
-
-            options.credentials = 'include';
-            options.headers = {
-                'Content-Type': 'application/json',
-                ...options.headers
-            };
-
-            try {
-                const response = await fetch(url, options);
-                let data = null;
-                try {
-                    data = await response.json();
-                } catch (e) {
-                    // Negeer: Geen JSON
-                }
-
-                if (!response.ok) {
-                    if (response.status === 401) {
-                        handleLogout(true);
-                        throw new Error("Sessie verlopen. Log opnieuw in.");
-                    }
-                    throw new Error(data?.error || data?.message || `Fout: HTTP Status ${response.status}`);
-                }
-                return data;
-
-            } catch (error) {
-                console.error("Fetch Error:", error);
-                throw error;
-            }
-        }
-
-        // --- API Client Test Handler (GET met Client ID/Key) ---
-        testClientSelect.addEventListener('change', () => {
-            const clientId = testClientSelect.value;
-            const client = activeClientKeys.find(k => k.client_id === clientId);
-            if (client) {
-                testClientKeyDiv.textContent = `Key: ${client.key}`;
-                testClientKeyDiv.classList.remove('hidden');
-            } else {
-                testClientKeyDiv.textContent = '';
-                testClientKeyDiv.classList.add('hidden');
-            }
-        });
-        
-        executeClientTestBtn.addEventListener('click', async () => {
-            hideMessage(testResponseMessage);
-            testResponsePre.textContent = 'Bezig met laden...';
-
-            const endpointPath = testEndpointPathInput.value.trim();
-            const clientId = testClientSelect.value;
-            const client = activeClientKeys.find(k => k.client_id === clientId);
-
-            if (!client) {
-                testResponsePre.textContent = 'Selecteer een geldige Client ID.';
-                showMessage(testResponseMessage, 'Selecteer een geldige Client ID voor de test.', true);
-                return;
-            }
-            if (!endpointPath) {
-                testResponsePre.textContent = 'Vul een geldig pad in.';
-                showMessage(testResponseMessage, 'Vul een geldig pad in.', true);
-                return;
-            }
-
-            // Gebruik de universele data-endpoint URL
-            const url = `${API_BASE_URL}/${endpointPath}`;
-            
-            try {
-                // Voer de GET uit met Client API Headers
-                const response = await fetch(url, {
-                    method: 'GET',
-                    headers: {
-                        'x-client-id': client.client_id,
-                        'x-api-key': client.key
-                    }
-                });
-                
-                let data = null;
-                try {
-                    data = await response.json();
-                } catch (e) {
-                    data = { message: "Geen JSON antwoord", status: response.status };
-                }
-                
-                const formattedResponse = JSON.stringify(data, null, 2);
-
-                testResponsePre.textContent = formattedResponse;
-
-                if (response.ok) {
-                    showMessage(testResponseMessage, `GET /api/${endpointPath} succesvol uitgevoerd (Status: ${response.status}).`, false);
-                } else {
-                    showMessage(testResponseMessage, `GET mislukt (Status: ${response.status}). Controleer de logs en het pad.`, true);
-                }
-            } catch (error) {
-                testResponsePre.textContent = JSON.stringify({ error: error.message }, null, 2);
-                showMessage(testResponseMessage, `Netwerkfout bij GET aanroep: ${error.message}`, true);
-            }
-        });
-
-        // --- Collectie Aanmaak en Selectie Logica ---
-        postClientIdSelect.addEventListener('change', () => {
-            const clientId = postClientIdSelect.value;
-            const client = activeClientKeys.find(k => k.client_id === clientId);
-            if (client) {
-                selectedClientKeyDiv.textContent = `Key: ${client.key}`;
-                selectedClientKeyDiv.classList.remove('hidden');
-            } else {
-                selectedClientKeyDiv.textContent = '';
-                selectedClientKeyDiv.classList.add('hidden');
-            }
-        });
-
-        createEndpointForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessage(createEndpointMessage);
-
-            const endpointName = newEndpointNameInput.value.trim();
-            const initialData = initialDataTextarea.value.trim();
-            const clientId = postClientIdSelect.value;
-            let parsedData;
-
-            if (!clientId) {
-                showMessage(createEndpointMessage, "Selecteer een geldig Client ID voor autorisatie.", true);
-                return;
-            }
-            if (!endpointName) {
-                showMessage(createEndpointMessage, "Vul een collectienaam in.", true);
-                return;
-            }
-            
-            try {
-                parsedData = JSON.parse(initialData);
-            } catch (e) {
-                showMessage(createEndpointMessage, "Ongeldige JSON in het initiële document.", true);
-                return;
-            }
-            
-            const client = activeClientKeys.find(k => k.client_id === clientId);
-            if (!client) {
-                showMessage(createEndpointMessage, "Geselecteerde Client ID niet gevonden. Herlaad het dashboard.", true);
-                return;
-            }
-
-            // POST uitvoeren met API Key headers
-            const url = `${API_BASE_URL}/${endpointName}`;
-            
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-client-id': client.client_id,
-                        'x-api-key': client.key
-                    },
-                    body: JSON.stringify(parsedData)
-                });
-                
-                const responseData = await response.json();
-
-                if (response.ok) {
-                    showMessage(createEndpointMessage, `Endpoint /api/${endpointName} succesvol aangemaakt (ID: ${responseData.id}).`, false);
-                    newEndpointNameInput.value = '';
-                    initialDataTextarea.value = JSON.stringify({ "created_by": "admin", "description": "Another placeholder document." }, null, 4); 
-                    loadDashboard(); 
-                } else {
-                    showMessage(createEndpointMessage, `Aanmaak mislukt (Status ${response.status}): ${responseData.error || 'Serverfout'}`, true);
-                }
-            } catch (error) {
-                 showMessage(createEndpointMessage, `Netwerkfout bij POST aanroep: ${error.message}`, true);
-            }
-        });
-
-        // --- Ruwe Debug Scan Logica ---
-        executeRawScanBtn.addEventListener('click', async () => {
-            rawScanResponsePre.textContent = 'Bezig met laden...';
-            
-            try {
-                const scanData = await safeFetch('/collections/scan');
-                // Toon de onbewerkte, geformatteerde JSON
-                rawScanResponsePre.textContent = JSON.stringify(scanData, null, 2);
-            } catch (error) {
-                rawScanResponsePre.textContent = `Fout bij ruwe scan: ${error.message}`;
-            }
-        });
-
-
-        // --- Scan en Conversie Logica ---
-
-        async function loadCollectionScan() {
-            hideMessage(scanMessage);
-            collectionScanTable.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">Bezig met scannen...</td></tr>';
-            
-            try {
-                const scanData = await safeFetch('/collections/scan'); 
-                renderCollectionScanTable(scanData);
-            } catch (error) {
-                showMessage(scanMessage, `Fout bij scannen: ${error.message}`, true);
-                collectionScanTable.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-red-500">Fout bij laden: ${error.message}</td></tr>`;
-            }
-        }
-        
-        function renderCollectionScanTable(collections) {
-            collectionScanTable.innerHTML = '';
-            
-            if (collections.length === 0) {
-                 collectionScanTable.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-500">Geen user-defined collecties gevonden.</td></tr>`;
-                 return;
-            }
-
-            collections.forEach(col => {
-                // Sla collecties met alleen errors over
-                if (col.error) return; 
-
-                const row = document.createElement('tr');
-                const isOrphan = col.orphan_documents > 0;
-                
-                row.className = isOrphan ? 'hover:bg-[#2e1d1d] border-l-4 border-red-500' : 'hover:bg-[#1f242b]';
-                
-                const actionButton = isOrphan
-                    ? `<button class="btn-warning text-xs py-1 px-2 rounded" 
-                                onclick="showConversionModal('${col.name}', ${col.orphan_documents})">
-                            Adopteer (${col.orphan_documents})
-                        </button>`
-                    : `<span class="text-green-500 text-xs">OK</span>`;
-                
-                row.innerHTML = `
-                    <td class="px-3 py-2 text-sm font-medium text-gray-200">${col.name}</td>
-                    <td class="px-3 py-2 text-sm text-gray-400">${col.total_documents}</td>
-                    <td class="px-3 py-2 text-sm font-semibold ${isOrphan ? 'text-red-400' : 'text-gray-400'}">
-                        ${col.orphan_documents}
+        function renderClients() {
+            const html = clients.map(c => `
+                <tr>
+                    <td class="p-2">${c.description}</td>
+                    <td class="p-2 font-mono text-blue-300">${c.id}</td>
+                    <td class="p-2 text-right">
+                        <button onclick="delClient('${c.id}')" class="text-red-400 font-bold text-xs">VERWIJDER</button>
                     </td>
-                    <td class="px-3 py-2 text-right">${actionButton}</td>
-                `;
-                collectionScanTable.appendChild(row);
-            });
-        }
-        
-        // --- Conversie Modal Simulatie ---
-        
-        window.showConversionModal = function(collectionName, count) {
-            // Vereenvoudigde prompt in plaats van een full custom modal
-            const clientIdToAdopt = prompt(`Wilt u ${count} documenten in collectie '${collectionName}' converteren? \n\nVoer het CLIENT ID in waaraan deze data moet worden toegewezen (bijv. de ID van uw frontend app).`);
-
-            if (clientIdToAdopt) {
-                if (activeClientKeys.some(k => k.client_id === clientIdToAdopt)) {
-                     if (confirm(`Bevestig: Alle ${count} weesdocumenten in ${collectionName} toewijzen aan Client ID ${clientIdToAdopt}? Dit is onomkeerbaar!`)) {
-                        performConversion(collectionName, clientIdToAdopt);
-                     }
-                } else {
-                    alert('FOUT: Dit Client ID bestaat niet in uw lijst met actieve keys. Maak het eerst aan.');
-                }
-            } else if (clientIdToAdopt === "") {
-                alert('Actie geannuleerd.');
-            }
+                </tr>
+            `).join('');
+            document.getElementById('clients-list').innerHTML = html;
         }
 
-        async function performConversion(collectionName, clientId) {
-             showMessage(scanMessage, `Conversie van ${collectionName} gestart...`, false);
-
-             try {
-                const response = await safeFetch('/collections/convert', {
-                    method: 'POST',
-                    body: JSON.stringify({ collection_name: collectionName, client_id: clientId })
-                });
-
-                showMessage(scanMessage, response.message, false);
-                loadDashboard(); // Herlaad alles inclusief de scan
-
-             } catch (error) {
-                showMessage(scanMessage, `Conversie mislukt: ${error.message}`, true);
-             }
+        function fillDropdowns() {
+            const opts = clients.map(c => `<option value="${c.id}">${c.description} (${c.id})</option>`).join('');
+            document.getElementById('test-client').innerHTML = opts;
+            document.getElementById('post-client').innerHTML = opts;
         }
-        
-        // --- Profiel Logica ---
-        async function loadAdminProfile() {
-            hideMessage(profileMessage);
-            try {
-                const data = await safeFetch('/admin/profile');
-                currentUsernameInput.value = data.username;
-                newProfileUsernameInput.value = '';
-                newProfilePasswordInput.value = '';
-                oldProfilePasswordInput.value = '';
-                
-            } catch (error) {
-                 showMessage(profileMessage, `Fout bij laden profiel: ${error.message}`, true);
-            }
-        }
-        
-        profileForm.addEventListener('submit', async (e) => {
+
+        // --- Actions ---
+
+        document.getElementById('add-client-form').addEventListener('submit', async e => {
             e.preventDefault();
-            hideMessage(profileMessage);
-
-            const oldPassword = oldProfilePasswordInput.value;
-            const newUsername = newProfileUsernameInput.value.trim();
-            const newPassword = newProfilePasswordInput.value.trim();
-            
-            if (!oldPassword) {
-                 showMessage(profileMessage, "Huidig wachtwoord is verplicht om wijzigingen op te slaan.", true);
-                 return;
-            }
-            if (newPassword && newPassword.length < 8) {
-                showMessage(profileMessage, "Nieuw wachtwoord moet minimaal 8 tekens bevatten.", true);
-                return;
-            }
-
-            const payload = {
-                old_password: oldPassword
-            };
-            if (newUsername) payload.new_username = newUsername;
-            if (newPassword) payload.new_password = newPassword;
-            
-            try {
-                const response = await safeFetch('/admin/profile', {
-                    method: 'POST',
-                    body: JSON.stringify(payload)
-                });
-                
-                if (response.new_username) {
-                    showMessage(profileMessage, `Profiel succesvol bijgewerkt. U moet opnieuw inloggen met de nieuwe gegevens.`, false);
-                    handleLogout(true); // Log uit na succesvolle naamswijziging
-                } else {
-                    showMessage(profileMessage, response.message, false);
-                    loadAdminProfile(); // Herlaad om velden te resetten
-                }
-
-            } catch (error) {
-                 showMessage(profileMessage, `Fout bij opslaan: ${error.message}`, true);
-            }
+            await fetch(`${BASE}/settings`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ description: document.getElementById('new-desc').value })
+            });
+            document.getElementById('new-desc').value = '';
+            load();
         });
 
-
-        // --- Authenticatie Handlers ---
-
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessage(loginMessage);
-
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-
-            try {
-                const response = await safeFetch('/login', {
-                    method: 'POST',
-                    body: JSON.stringify({ username, password })
-                });
-
-                if (response && response.message) {
-                    loadDashboard();
-                }
-
-            } catch (error) {
-                showMessage(loginMessage, error.message, true);
-            }
-        });
-
-        logoutBtn.addEventListener('click', () => handleLogout(false));
-
-        async function handleLogout(isSessionExpired) {
-            try {
-                await safeFetch('/logout', { method: 'POST' });
-            } catch (e) {
-                // Negeer fouten, we gaan toch uitloggen
-            }
-            toggleScreens(false);
-            showMessage(loginMessage, isSessionExpired ? 'Sessie verlopen. Log opnieuw in.' : 'U bent uitgelogd.', !isSessionExpired);
-            userDisplay.textContent = '';
-        }
-
-        // --- Dashboard Data Laden ---
-
-        async function loadDashboard() {
-            try {
-                const dashboardData = await safeFetch('/dashboard');
-                const settingsData = await safeFetch('/settings');
-                
-                // Active Keys array wordt bijgewerkt met de volledige keys
-                activeClientKeys = settingsData.api_keys; 
-
-                toggleScreens(true);
-
-                // Dashboard Samenvatting
-                currentUserId = dashboardData.user_id;
-                userDisplay.textContent = `Ingelogd als: ${dashboardData.user_id}`;
-                statEndpoints.textContent = dashboardData.summary.endpoints_count;
-                statClients.textContent = dashboardData.summary.clients_count;
-                statCalls.textContent = dashboardData.summary.calls_count;
-
-                // Recente Activiteit
-                renderActivity(dashboardData.recent_activity);
-                
-                // API Keys
-                renderApiKeys(settingsData.api_keys);
-                
-                // Client ID Selectors vullen
-                populateClientKeySelector(settingsData.api_keys, postClientIdSelect);
-                populateClientKeySelector(settingsData.api_keys, testClientSelect);
-                
-                
-            } catch (error) {
-                console.error("Dashboard laadfout:", error);
-                if (!currentUserId) { 
-                    toggleScreens(false);
-                }
-            }
-        }
-
-        // --- Rendering Functies ---
-        
-        function populateClientKeySelector(keys, selectElement) {
-            selectElement.innerHTML = '<option value="">-- Selecteer een Client ID --</option>';
-            keys.forEach(client => {
-                const option = document.createElement('option');
-                option.value = client.client_id;
-                option.textContent = `${client.client_id} (${client.description})`;
-                selectElement.appendChild(option);
+        window.delClient = async id => {
+            if(!confirm('Verwijderen?')) return;
+            await fetch(`${BASE}/settings`, {
+                method: 'DELETE', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ client_id: id })
             });
-            // Wis eventuele gekoppelde key displays
-            if (selectElement === postClientIdSelect) selectedClientKeyDiv.classList.add('hidden');
-            if (selectElement === testClientSelect) testClientKeyDiv.classList.add('hidden');
-        }
-        
-        function renderActivity(activity) {
-            activityList.innerHTML = '';
-            if (activity.length === 0) {
-                activityList.innerHTML = '<li class="text-gray-500">Nog geen recente activiteit.</li>';
-                return;
-            }
-
-            activity.forEach(log => {
-                const date = new Date(log.timestamp).toLocaleTimeString();
-                const item = document.createElement('li');
-                item.className = 'border-b border-gray-800 pb-2';
-                item.innerHTML = `
-                    <span class="font-mono text-xs text-gray-500">${date}</span>
-                    <p class="text-gray-200">${log.action.toUpperCase()} op 
-                        <span class="font-semibold text-green-400">${log.endpoint}</span> 
-                        (Client: <span class="text-xs font-mono text-blue-400">${log.client_id}</span>)
-                    </p>
-                `;
-                activityList.appendChild(item);
-            });
-        }
-
-        function renderApiKeys(keys) {
-            apiKeysTable.innerHTML = '';
-
-            if (keys.length === 0) {
-                apiKeysTable.innerHTML = `<tr><td colspan="4" class="px-3 py-2 text-center text-gray-500">Geen actieve API sleutels gevonden.</td></tr>`;
-                return;
-            }
-            
-            keys.forEach(client => {
-                const row = document.createElement('tr');
-                row.className = 'hover:bg-[#1f242b]';
-                
-                row.innerHTML = `
-                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-200">${client.description}</td>
-                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-400 font-mono">${client.client_id}</td>
-                    <td class="px-3 py-2 text-sm font-mono flex items-center">
-                        <input type="text" value="${client.key}" readonly class="text-xs bg-gray-800 border-none rounded-md p-1 w-full text-green-400" id="key-${client.client_id}">
-                        <button class="ml-2 text-gray-500 hover:text-gray-200" onclick="copyToClipboard('key-${client.client_id}', this)" title="Kopieer">
-                            <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </button>
-                    </td>
-                    <td class="px-3 py-2 whitespace-nowrap text-right text-sm font-medium">
-                        <button class="btn-danger text-xs py-1 px-2 rounded" onclick="revokeKey('${client.client_id}')">Trek in</button>
-                    </td>
-                `;
-                apiKeysTable.appendChild(row);
-            });
-        }
-
-        // Global functie voor kopiëren van input
-        window.copyToClipboard = function(elementId, button) {
-            const copyText = document.getElementById(elementId);
-            copyText.select();
-            copyText.setSelectionRange(0, 99999); 
-            document.execCommand('copy');
-            
-            const originalHTML = button.innerHTML;
-            button.innerHTML = '<svg class="w-4 h-4 text-green-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
-            setTimeout(() => {
-                button.innerHTML = originalHTML;
-            }, 1500);
-        };
-        
-        // Global functie voor kopiëren van pure tekst (voor collectienamen)
-        window.copyToClipboardText = function(text) {
-             navigator.clipboard.writeText(text).then(() => {
-                // In een productieve omgeving zou dit een custom modal zijn in plaats van alert
-                alert(`Collectie naam '${text}' gekopieerd!`);
-            }).catch(err => {
-                console.error('Kopiëren mislukt', err);
-                alert('Kopiëren mislukt. Probeer handmatig te selecteren.');
-            });
+            load();
         };
 
-        // --- Key Beheer Handlers ---
-
-        generateKeyForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessage(settingsMessage);
-
-            const description = document.getElementById('new-key-desc').value;
-
+        window.doGet = async () => {
+            const id = document.getElementById('test-client').value;
+            const ep = document.getElementById('test-endpoint').value;
             try {
-                const url = `${API_BASE_URL}/settings`;
-                const response = await safeFetch('/settings', {
-                    method: 'POST',
-                    body: JSON.stringify({ description })
-                });
-
-                showMessage(settingsMessage, `Sleutel voor '${description}' gegenereerd. ID: ${response.client_id}`, false);
-                document.getElementById('new-key-desc').value = '';
-                loadDashboard(); // Herlaad data inclusief nieuwe key
-
-            } catch (error) {
-                showMessage(settingsMessage, `Fout bij genereren: ${error.message}`, true);
-            }
-        });
-
-        window.revokeKey = async function(clientId) {
-            if (!confirm(`Weet u zeker dat u Client ID ${clientId} wilt intrekken? Dit is onomkeerbaar!`)) {
-                return;
-            }
-            hideMessage(settingsMessage);
-
-            try {
-                await safeFetch('/settings', {
-                    method: 'DELETE',
-                    body: JSON.stringify({ client_id: clientId })
-                });
-
-                showMessage(settingsMessage, `Client ID ${clientId} succesvol ingetrokken.`, false);
-                loadDashboard(); 
-
-            } catch (error) {
-                showMessage(settingsMessage, `Fout bij intrekken: ${error.message}`, true);
-            }
+                const res = await fetch(`${BASE}/api/${ep}`, { headers: { 'x-client-id': id } });
+                const json = await res.json();
+                document.getElementById('test-res').innerText = JSON.stringify(json, null, 2);
+            } catch(e) { document.getElementById('test-res').innerText = e; }
         };
 
+        document.getElementById('post-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const id = document.getElementById('post-client').value;
+            const ep = document.getElementById('post-endpoint').value;
+            const body = document.getElementById('post-body').value;
+            const msg = document.getElementById('post-res');
+            
+            try {
+                const res = await fetch(`${BASE}/api/${ep}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-client-id': id },
+                    body: body
+                });
+                const json = await res.json();
+                msg.innerText = JSON.stringify(json);
+                msg.className = res.ok ? 'mt-4 text-green-400' : 'mt-4 text-red-400';
+                msg.classList.remove('hidden');
+            } catch(e) { alert(e); }
+        });
 
-        // --- Initialisatie ---
+        window.showTab = t => {
+            ['clients','test','data'].forEach(x => document.getElementById(`tab-${x}`).classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`tab-${t}`).classList.remove('hidden');
+            event.target.classList.add('active');
+        };
 
-        // Controleer of de gebruiker al ingelogd is
-        loadDashboard(); 
-        
+        load();
     </script>
 </body>
 </html>
