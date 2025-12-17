@@ -152,7 +152,6 @@
                             <div>
                                 <div class="flex items-center gap-3">
                                     <h2 id="det-name" class="text-3xl font-bold text-white tracking-tight">...</h2>
-                                    <button onclick="renameEndpoint()" class="text-slate-500 hover:text-white transition text-sm">✎</button>
                                 </div>
                                 <div class="flex gap-2 mt-2">
                                     <span id="det-lock-badge" class="hidden px-2 py-0.5 rounded-md text-[9px] font-black bg-red-500 text-white uppercase tracking-tighter">Read Only</span>
@@ -161,6 +160,7 @@
                             </div>
                         </div>
                         <div class="flex gap-3">
+                            <button onclick="renameEndpoint()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Hernoemen"><i class="fas fa-pencil-alt"></i></button>
                             <button onclick="downloadEndpoint()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Export"><i class="fas fa-download"></i></button>
                             <button onclick="triggerImport()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Import"><i class="fas fa-upload"></i></button>
                             <button onclick="doClone()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Kloon"><i class="fas fa-copy"></i></button>
@@ -302,8 +302,6 @@
                 renderErrorLog();
                 if(currentEp) loadDetail(currentEp);
             } catch(e) {
-                // BUG FIX: Alleen melding tonen als er geen data is.
-                // Anders behouden we de data en doen we een stille refresh op de achtergrond.
                 if(!globalData) {
                     document.getElementById('endpoints-container').innerHTML = `<div class="p-8 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm font-bold text-center">G2 SERVER OFFLINE: ${API}</div>`;
                 } else {
@@ -360,7 +358,6 @@
                 if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) statusClass = 'bg-emerald-500 glow-green';
                 const active = currentEp === ep.name ? 'item-active bg-white/5 scale-[1.02]' : 'hover:bg-white/5';
                 
-                // Retention status text
                 const retentionText = (!ep.ttl || ep.ttl == 0) ? 'Never' : `${ep.ttl}d`;
                 const retentionIcon = (!ep.ttl || ep.ttl == 0) ? '' : '<i class="fas fa-hourglass-half mr-1 opacity-50"></i>';
                 
@@ -452,6 +449,27 @@
         function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
         async function doClone() { const d = prompt("Naam voor kopie:"); if(d) { await fetch(`${API}/api/admin/clone`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source: currentEp, destination: d })}); refresh(); } }
         
+        async function renameEndpoint() {
+            const oldName = currentEp;
+            const newName = prompt("Nieuwe naam voor endpoint:", oldName);
+            if (newName && newName !== oldName) {
+                try {
+                    // We gaan ervan uit dat de backend een clone+drop of een rename actie ondersteunt.
+                    // Als er geen expliciete rename API is, gebruiken we clone als fallback logic.
+                    const res = await fetch(`${API}/api/admin/clone`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ source: oldName, destination: newName })
+                    });
+                    if (res.ok) {
+                        await fetch(`${API}/api/admin/collections/${oldName}`, { method: 'DELETE' });
+                        currentEp = newName;
+                        refresh();
+                    }
+                } catch (e) { console.error(e); }
+            }
+        }
+
         async function saveSettings() { 
             await fetch(`${API}/api/admin/settings`, { 
                 method: 'POST', 
