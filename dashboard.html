@@ -7,8 +7,7 @@
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; overflow: hidden; }
         
-        /* AANGEPASTE GRID LAYOUT */
-        /* Links: 250px | Midden: 500px (2x Links) | Rechts: Rest van de ruimte (1fr) */
+        /* LAYOUT: Links (250px) | Midden (500px) | Rechts (Rest) */
         .main-layout { display: grid; grid-template-columns: 250px 500px 1fr; height: 100vh; }
         
         .col-sidebar { background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; }
@@ -16,7 +15,7 @@
         .col-detail { background: #0d1117; overflow-y: auto; display: flex; flex-direction: column; }
 
         /* Navigation Items */
-        .nav-item { padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav-item { padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
         .nav-item:hover { background: #21262d; color: white; }
         .nav-item.active { background: #21262d; border-left-color: #238636; color: white; font-weight: 600; }
         
@@ -25,7 +24,7 @@
         .ep-item:hover { background: #161b22; }
         .ep-item.active { background: #1f242c; border-left: 3px solid #1f6feb; }
         
-        /* Status Indicators */
+        /* Status & Visuals */
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         .status-green { background: #238636; box-shadow: 0 0 5px #238636; }
         .status-orange { background: #d29922; }
@@ -33,7 +32,6 @@
         .size-bar { height: 2px; background: #30363d; margin-top: 6px; width: 100%; border-radius: 2px; overflow: hidden; }
         .size-fill { height: 100%; background: #1f6feb; }
 
-        /* Tags & Buttons */
         .tag { font-size: 0.7rem; padding: 1px 5px; border-radius: 4px; background: #30363d; color: #8b949e; }
         .tag-lock { background: #da3633; color: white; }
         
@@ -62,8 +60,10 @@
             
             <div class="py-2">
                 <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2 mt-2">Filters</div>
+                
                 <div class="nav-item active" id="filter-all" onclick="applyFilter('ALL', null)">
-                    Alle Endpoints <span id="count-all" class="tag">0</span>
+                    <span>Alle Endpoints</span>
+                    <span id="count-all" class="tag">0</span>
                 </div>
             </div>
 
@@ -104,7 +104,6 @@
                                 <h2 id="det-name" class="text-2xl font-bold text-white">...</h2>
                                 <button onclick="renameEndpoint()" class="text-gray-500 hover:text-white" title="Hernoem Endpoint">✎</button>
                             </div>
-                            
                             <div class="flex gap-2 mt-2">
                                 <span id="det-lock-badge" class="tag tag-lock hidden">LOCKED</span>
                                 <span id="det-ttl-badge" class="tag hidden">TTL: <span id="det-ttl-val"></span>d</span>
@@ -131,15 +130,14 @@
                 </div>
 
                 <div id="tab-data" class="p-6 space-y-4 flex-grow overflow-auto">
-                    
                     <div class="flex gap-2">
-                        <input type="text" id="search-term" placeholder="Zoek op ID of tekst (Deep Search)..." class="bg-[#161b22] border border-[#30363d] rounded p-2 text-sm text-white flex-grow focus:border-blue-500 outline-none">
+                        <input type="text" id="search-term" placeholder="Deep Search (ID of tekst)..." class="bg-[#161b22] border border-[#30363d] rounded p-2 text-sm text-white flex-grow focus:border-blue-500 outline-none">
                         <button onclick="doSearch()" class="btn btn-blue">Zoeken</button>
                     </div>
 
                     <div id="editor-area" class="flex gap-6 h-full pb-10">
                         <div class="w-1/3 flex flex-col gap-2 overflow-y-auto h-full pr-2" id="search-results">
-                            <div class="text-xs text-gray-500 text-center mt-4">Voer een zoekopdracht uit of klik op 'Zoeken' om de laatste 50 items te laden.</div>
+                            <div class="text-xs text-gray-500 text-center mt-4">Voer een zoekopdracht uit...</div>
                         </div>
 
                         <div class="w-2/3 flex flex-col gap-2 h-full">
@@ -160,22 +158,21 @@
                 <div id="tab-settings" class="p-6 space-y-6 hidden max-w-2xl">
                     <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
                         <h3 class="font-bold text-white mb-2">Endpoint Lock</h3>
-                        <p class="text-xs text-gray-500 mb-4">Indien ingeschakeld, kunnen clients alleen lezen (GET). Schrijven (POST/PUT/DELETE) wordt geblokkeerd.</p>
+                        <p class="text-xs text-gray-500 mb-4">Blokkeer schrijven (Read-Only).</p>
                         <label class="flex items-center gap-2 text-white cursor-pointer select-none">
                             <input type="checkbox" id="set-locked" class="w-4 h-4"> 
-                            <span class="font-bold text-red-400">Read-Only Mode activeren</span>
+                            <span class="font-bold text-red-400">Lock activeren</span>
                         </label>
                     </div>
 
                     <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
                         <h3 class="font-bold text-white mb-2">Time To Live (TTL)</h3>
-                        <p class="text-xs text-gray-500 mb-4">Verwijder automatisch records die ouder zijn dan het ingestelde aantal dagen.</p>
+                        <p class="text-xs text-gray-500 mb-4">Auto-delete na X dagen.</p>
                         <div class="flex items-center gap-2">
                             <input type="number" id="set-ttl" class="bg-[#0d1117] border border-[#30363d] rounded p-2 text-white w-24 focus:border-blue-500 outline-none" placeholder="0">
-                            <span class="text-sm text-gray-500">dagen (0 = Nooit verwijderen)</span>
+                            <span class="text-sm text-gray-500">dagen (0 = Uit)</span>
                         </div>
                     </div>
-                    
                     <button onclick="saveSettings()" class="btn btn-blue w-full py-2">Instellingen Opslaan</button>
                 </div>
             </div>
@@ -185,10 +182,11 @@
     <script>
         const API = window.location.origin;
         let globalData = null;
+        let currentFilter = { type: 'ALL', value: null };
         let currentEp = null;
         let currentRecordId = null;
 
-        // --- CORE ---
+        // --- INIT ---
         async function refresh() {
             const res = await fetch(`${API}/api/admin/stats`);
             globalData = await res.json();
@@ -197,12 +195,13 @@
             document.getElementById('count-all').innerText = globalData.endpoints.length;
             
             renderSidebar();
-            renderList();
+            renderEndpointsList();
             renderErrorLog();
 
             if(currentEp) loadDetail(currentEp);
         }
 
+        // --- SIDEBAR & FILTER LOGIC ---
         function renderSidebar() {
             // Apps
             const apps = {};
@@ -213,12 +212,14 @@
                 }
             });
             document.getElementById('list-apps').innerHTML = Object.keys(apps).map(a => 
-                `<div class="nav-item" onclick="filterList('${a}_')">${a} <span class="tag">${apps[a]}</span></div>`
+                `<div class="nav-item ${isFilter('APP', a)}" onclick="applyFilter('APP', '${a}')">
+                    <span>${a}</span> <span class="tag">${apps[a]}</span>
+                </div>`
             ).join('');
 
             // Clients
             document.getElementById('list-users').innerHTML = globalData.clients.map(c => `
-                <div class="nav-item">
+                <div class="nav-item ${isFilter('USER', c.client_id)}" onclick="applyFilter('USER', '${c.client_id}')">
                     <div class="flex flex-col">
                         <span>${c.client_id}</span>
                         <span class="text-[9px] text-gray-500">${c.last_seen ? timeAgo(c.last_seen) : 'Nooit'}</span>
@@ -226,12 +227,40 @@
                     <span class="tag">${c.total_records}</span>
                 </div>
             `).join('');
+
+            // FIX: Zorg dat de "Alle Endpoints" knop visueel update
+            const allBtn = document.getElementById('filter-all');
+            if(currentFilter.type === 'ALL') allBtn.classList.add('active');
+            else allBtn.classList.remove('active');
         }
 
-        function renderList(filterPrefix = '') {
+        function applyFilter(type, value) {
+            currentFilter = { type, value };
+            renderSidebar(); // Update visual active states
+            renderEndpointsList();
+        }
+
+        function isFilter(type, value) {
+            return (currentFilter.type === type && currentFilter.value === value) ? 'active' : '';
+        }
+
+        function renderEndpointsList() {
             const list = document.getElementById('endpoints-container');
-            const filtered = globalData.endpoints.filter(ep => ep.name.startsWith(filterPrefix));
-            
+            let filtered = [];
+            let title = "Alle Endpoints";
+
+            if (currentFilter.type === 'ALL') {
+                filtered = globalData.endpoints;
+            } else if (currentFilter.type === 'APP') {
+                filtered = globalData.endpoints.filter(ep => ep.name.startsWith(currentFilter.value + '_'));
+                title = `App: ${currentFilter.value}`;
+            } else if (currentFilter.type === 'USER') {
+                filtered = globalData.endpoints.filter(ep => ep.owners && ep.owners.includes(currentFilter.value));
+                title = `Client: ${currentFilter.value}`;
+            }
+
+            document.getElementById('list-title').innerText = title;
+
             list.innerHTML = filtered.map(ep => {
                 let statusColor = 'status-red';
                 if(ep.last_activity) {
@@ -248,24 +277,20 @@
                     </div>
                     <div class="flex justify-between items-center text-xs text-gray-500">
                         <span>${ep.count} records</span>
-                        ${ep.locked ? '<span class="text-red-500 font-bold">🔒 LOCKED</span>' : ''}
+                        ${ep.locked ? '<span class="text-red-500 font-bold">🔒</span>' : ''}
                     </div>
                     <div class="size-bar"><div class="size-fill" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
             }).join('');
-            
-            document.getElementById('list-title').innerText = filterPrefix ? `Filter: ${filterPrefix}*` : 'Alle Endpoints';
         }
-
-        function filterList(prefix) { renderList(prefix); }
 
         function selectEp(name) {
             currentEp = name;
-            renderList();
+            renderEndpointsList();
             document.getElementById('detail-placeholder').classList.add('hidden');
             document.getElementById('detail-content').classList.remove('hidden');
             
-            // Reset editor state
+            // Reset Editor
             document.getElementById('json-editor').classList.add('hidden');
             document.getElementById('editor-placeholder').classList.remove('hidden');
             document.getElementById('editor-actions').classList.add('hidden');
@@ -278,17 +303,14 @@
             const ep = globalData.endpoints.find(e => e.name === name);
             document.getElementById('det-name').innerText = name;
             document.getElementById('det-count').innerText = ep.count;
-            
             document.getElementById('det-lock-badge').classList.toggle('hidden', !ep.locked);
             document.getElementById('det-ttl-badge').classList.toggle('hidden', !(ep.ttl > 0));
             if(ep.ttl > 0) document.getElementById('det-ttl-val').innerText = ep.ttl;
-
             document.getElementById('set-locked').checked = ep.locked;
             document.getElementById('set-ttl').value = ep.ttl || '';
         }
 
-        // --- ACTIONS ---
-
+        // --- SEARCH & DATA ---
         async function doSearch() {
             const term = document.getElementById('search-term').value;
             const res = await fetch(`${API}/api/admin/search`, {
@@ -301,25 +323,30 @@
             if(docs.length === 0) {
                 container.innerHTML = '<div class="text-center text-gray-500 mt-4 text-xs">Geen resultaten</div>';
             } else {
+                // FIX: Schone weergave in linker zoeklijst
                 container.innerHTML = docs.map(d => `
-                    <div class="p-3 border border-[#30363d] rounded bg-[#161b22] hover:bg-[#21262d] cursor-pointer" onclick="loadRecord('${d._id}')">
-                        <div class="text-[10px] text-blue-400 font-mono mb-1">${d._id}</div>
-                        <div class="text-xs text-gray-400 truncate font-mono">${JSON.stringify(cleanDisplay(d))}</div>
+                    <div class="p-3 border border-[#30363d] rounded bg-[#161b22] hover:bg-[#21262d] cursor-pointer mb-2 transition-colors group" onclick="loadRecord('${d._id}')">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[11px] font-mono text-blue-400 font-bold group-hover:text-blue-300">${d._id}</span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <div class="flex items-center text-[10px] text-gray-400">
+                                <span class="w-8 inline-block text-gray-600">User:</span> 
+                                <span class="text-yellow-600 font-mono">${d._client_id || '?'}</span>
+                            </div>
+                            <div class="flex items-center text-[10px] text-gray-500">
+                                <span class="w-8 inline-block text-gray-600">Tijd:</span> 
+                                <span>${d._created_at || '-'}</span>
+                            </div>
+                        </div>
                     </div>
                 `).join('');
             }
         }
 
-        function cleanDisplay(d) {
-            // Helper om preview iets schoner te maken (zonder meta velden)
-            const c = {...d};
-            delete c._id; delete c._client_id; delete c._created_at; delete c._updated_at;
-            return c;
-        }
-
         async function loadRecord(id) {
-            // Fetch fresh record
             currentRecordId = id;
+            // Fetch fresh record
             const res = await fetch(`${API}/api/admin/search`, {
                 method: 'POST', headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({ collection: currentEp, term: id })
@@ -341,38 +368,31 @@
                     method: 'PUT', headers: {'Content-Type':'application/json'},
                     body: JSON.stringify(data)
                 });
-                if(res.ok) {
-                    alert("Opgeslagen!");
-                    doSearch(); // Refresh list to show changes
-                } else {
-                    const j = await res.json();
-                    alert("Fout: " + j.error);
-                }
-            } catch(e) { alert("Ongeldige JSON format"); }
+                if(res.ok) { alert("Opgeslagen!"); doSearch(); } 
+                else { const j = await res.json(); alert("Fout: " + j.error); }
+            } catch(e) { alert("Ongeldige JSON"); }
         }
 
+        // --- TOOLS ---
         async function renameEndpoint() {
-            const newName = prompt("Nieuwe naam voor " + currentEp + ":", currentEp);
+            const newName = prompt("Nieuwe naam:", currentEp);
             if(newName && newName !== currentEp) {
                 const res = await fetch(`${API}/api/admin/rename`, {
                     method: 'POST', headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({ old_name: currentEp, new_name: newName })
                 });
-                if(res.ok) {
-                    currentEp = newName;
-                    refresh();
-                    selectEp(newName);
-                } else alert("Fout bij hernoemen");
+                if(res.ok) { currentEp = newName; refresh(); selectEp(newName); } 
+                else alert("Fout bij hernoemen");
             }
         }
 
-        // --- STANDARD TOOLS ---
         async function dropEndpoint() {
             if(confirm(`Weet je zeker dat je ${currentEp} wilt verwijderen?`)) {
                 await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' });
                 window.location.reload();
             }
         }
+
         function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
         
         async function doClone() {
@@ -392,7 +412,7 @@
                 body: JSON.stringify({ collection: currentEp })
             });
             const d = await res.json();
-            alert("Snapshot gemaakt: " + d.snapshot);
+            alert("Snapshot: " + d.snapshot);
         }
 
         async function saveSettings() {
@@ -403,7 +423,7 @@
                 body: JSON.stringify({ collection: currentEp, locked, ttl_days: ttl })
             });
             refresh();
-            alert("Instellingen opgeslagen");
+            alert("Opgeslagen");
         }
         
         async function runCleanup() {
@@ -421,8 +441,6 @@
         function switchTab(t) {
             ['data','settings'].forEach(x => document.getElementById(`tab-${x}`).classList.add('hidden'));
             document.getElementById(`tab-${t}`).classList.remove('hidden');
-            
-            // Visual tabs styling logic (simplified)
             document.querySelectorAll('.tab-btn').forEach(b => {
                 b.classList.remove('border-[#1f6feb]', 'text-white');
                 b.classList.add('border-transparent');
