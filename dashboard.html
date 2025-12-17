@@ -54,6 +54,18 @@
             border-radius: 12px;
             box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);
         }
+
+        .size-bar {
+            height: 2px;
+            background: rgba(255,255,255,0.05);
+            margin-top: 12px;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .size-fill {
+            height: 100%;
+            background: rgb(var(--color-primary));
+        }
     </style>
 </head>
 <body class="h-full text-slate-300 bg-dark overflow-hidden">
@@ -116,12 +128,12 @@
                     <p class="text-xs text-slate-500 mt-1" id="stat-db-size">Database: 0.00 MB</p>
                 </div>
                 <button onclick="refresh()" class="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 transition-all border border-white/5">
-                    <i class="fas fa-sync-alt"></i>
+                    <i id="refresh-icon" class="fas fa-sync-alt"></i>
                 </button>
             </header>
             
             <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-3">
-                </div>
+            </div>
         </main>
 
         <section class="relative flex flex-col h-full overflow-hidden">
@@ -274,21 +286,36 @@
         let currentRecordId = null;
 
         async function refresh() {
+            const icon = document.getElementById('refresh-icon');
+            if(icon) icon.classList.add('fa-spin');
+            
             try {
                 const res = await fetch(`${API}/api/admin/stats`);
+                if(!res.ok) throw new Error("Offline");
+                
                 globalData = await res.json();
                 document.getElementById('stat-db-size').innerText = `Database: ${globalData.db_info.data_size_mb} MB | Records: ${globalData.db_info.total_objects}`;
                 document.getElementById('count-all').innerText = globalData.endpoints.length;
+                
                 renderSidebar();
                 renderEndpointsList();
                 renderErrorLog();
                 if(currentEp) loadDetail(currentEp);
             } catch(e) {
-                document.getElementById('endpoints-container').innerHTML = `<div class="p-8 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm font-bold text-center">G2 SERVER OFFLINE: ${API}</div>`;
+                // BUG FIX: Alleen melding tonen als er geen data is.
+                // Anders behouden we de data en doen we een stille refresh op de achtergrond.
+                if(!globalData) {
+                    document.getElementById('endpoints-container').innerHTML = `<div class="p-8 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm font-bold text-center">G2 SERVER OFFLINE: ${API}</div>`;
+                } else {
+                    console.warn("Background refresh failed, keeping cached data.");
+                }
+            } finally {
+                if(icon) setTimeout(() => icon.classList.remove('fa-spin'), 500);
             }
         }
 
         function renderSidebar() {
+            if(!globalData) return;
             const apps = {};
             globalData.endpoints.forEach(ep => {
                 if(ep.name.includes('_')) {
@@ -322,6 +349,7 @@
         function applyFilter(t, v) { currentFilter = { type: t, value: v }; renderSidebar(); renderEndpointsList(); }
 
         function renderEndpointsList() {
+            if(!globalData) return;
             const list = document.getElementById('endpoints-container');
             let filtered = (currentFilter.type === 'ALL') ? globalData.endpoints : 
                            (currentFilter.type === 'APP') ? globalData.endpoints.filter(e => e.name.startsWith(currentFilter.value + '_')) :
@@ -332,14 +360,23 @@
                 if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) statusClass = 'bg-emerald-500 glow-green';
                 const active = currentEp === ep.name ? 'item-active bg-white/5 scale-[1.02]' : 'hover:bg-white/5';
                 
+                // Retention status text
+                const retentionText = (!ep.ttl || ep.ttl == 0) ? 'Never' : `${ep.ttl}d`;
+                const retentionIcon = (!ep.ttl || ep.ttl == 0) ? '' : '<i class="fas fa-hourglass-half mr-1 opacity-50"></i>';
+                
                 return `<div class="p-5 rounded-2xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
                     <div class="flex justify-between items-start mb-4">
                         <div class="font-mono text-sm text-slate-200 font-bold tracking-tighter truncate w-64">${ep.name}</div>
                         <div class="w-2.5 h-2.5 rounded-full ${statusClass} mt-1"></div>
                     </div>
-                    <div class="flex justify-between items-end">
-                        <span class="text-[10px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJECTS</span>
-                        ${ep.locked ? '<i class="fas fa-lock text-red-500 text-xs"></i>' : ''}
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-3">
+                            <span class="text-[10px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJ</span>
+                            <span class="text-[10px] font-bold text-slate-600 flex items-center">${retentionIcon}${retentionText}</span>
+                        </div>
+                        <div class="flex items-center">
+                            <i class="fas fa-lock text-[11px] ${ep.locked ? 'text-red-500' : 'text-emerald-500 opacity-30'}"></i>
+                        </div>
                     </div>
                     <div class="size-bar"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
@@ -349,11 +386,12 @@
         function selectEp(n) { currentEp = n; renderEndpointsList(); loadDetail(n); }
 
         function loadDetail(n) {
+            if(!globalData) return;
             const ep = globalData.endpoints.find(e => e.name === n);
+            if(!ep) return;
             document.getElementById('detail-content').classList.remove('hidden');
             document.getElementById('detail-placeholder').classList.add('hidden');
             document.getElementById('det-name').innerText = n;
-            document.getElementById('det-count').innerText = ep.count;
             document.getElementById('set-locked').checked = ep.locked;
             document.getElementById('set-ttl').value = ep.ttl || 0;
             document.getElementById('det-lock-badge').classList.toggle('hidden', !ep.locked);
@@ -392,8 +430,8 @@
             try {
                 const data = JSON.parse(document.getElementById('json-editor').value);
                 await fetch(`${API}/api/admin/record/${currentEp}/${currentRecordId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
-                alert("✓ Record bijgewerkt"); refresh();
-            } catch(e) { alert("X Ongeldige JSON"); }
+                refresh();
+            } catch(e) { console.error("Invalid JSON"); }
         }
 
         function triggerImport() { document.getElementById('import-input').click(); }
@@ -404,7 +442,7 @@
             const reader = new FileReader();
             reader.onload = async (e) => {
                 await fetch(`${API}/api/admin/import`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, records: JSON.parse(e.target.result), owner, clear_first: clear })});
-                alert("✓ Import voltooid"); refresh();
+                refresh();
             };
             reader.readAsText(file);
         }
@@ -413,9 +451,22 @@
         async function dropEndpoint() { if(confirm("⛔ COLLECTIE VOLLEDIG VERWIJDEREN?")) { await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' }); window.location.reload(); } }
         function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
         async function doClone() { const d = prompt("Naam voor kopie:"); if(d) { await fetch(`${API}/api/admin/clone`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source: currentEp, destination: d })}); refresh(); } }
-        async function saveSettings() { await fetch(`${API}/api/admin/settings`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, locked: document.getElementById('set-locked').checked, ttl_days: document.getElementById('set-ttl').value })}); refresh(); alert("✓ Config geüpdatet"); }
+        
+        async function saveSettings() { 
+            await fetch(`${API}/api/admin/settings`, { 
+                method: 'POST', 
+                headers: {'Content-Type':'application/json'}, 
+                body: JSON.stringify({ 
+                    collection: currentEp, 
+                    locked: document.getElementById('set-locked').checked, 
+                    ttl_days: document.getElementById('set-ttl').value 
+                })
+            }); 
+            refresh(); 
+        }
         
         function renderErrorLog() {
+            if(!globalData) return;
             document.getElementById('list-errors').innerHTML = globalData.errors.map(e => `
                 <div class="p-2 border-l-2 border-red-500 bg-red-500/5 text-[10px] text-red-400">
                     <span class="block text-slate-600 font-bold">${e.time.split('T')[1].substr(0,8)}</span> ${e.msg}
