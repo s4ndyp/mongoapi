@@ -11,7 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Kopieer de rest van de applicatie code
-COPY .
+COPY *.*
 #COPY dashboard.html .
 
 
