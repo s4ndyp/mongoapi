@@ -14,31 +14,21 @@
     <style>
         :root { --color-primary: 99 102 241; }
         .main-layout { display: grid; grid-template-columns: 250px 500px 1fr; height: 100vh; }
-        
-        /* Custom Scrollbar override voor layout panels */
         .col-scroll { overflow-y: auto; }
-        
-        /* Status Dots */
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         .status-green { background: #10b981; box-shadow: 0 0 5px #10b981; }
         .status-orange { background: #f59e0b; }
         .status-red { background: #ef4444; }
-
-        /* Heatmap Bar */
         .size-bar { height: 3px; background: rgba(255,255,255,0.1); margin-top: 8px; width: 100%; border-radius: 2px; overflow: hidden; }
         .size-fill { height: 100%; background: rgb(var(--color-primary)); }
-
-        /* Editor */
-        textarea.editor { 
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace; 
-            font-size: 13px; 
-            line-height: 1.5;
-            outline: none; 
-            resize: none; 
-        }
+        textarea.editor { font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.5; outline: none; resize: none; }
+        /* Verborgen file input */
+        #import-input { display: none; }
     </style>
 </head>
 <body class="h-full text-gray-200 font-sans bg-dark transition-colors duration-300 overflow-hidden">
+
+    <input type="file" id="import-input" accept=".json" onchange="handleImportFile()">
 
     <div class="main-layout">
         
@@ -54,7 +44,6 @@
             </div>
             
             <div class="p-4 space-y-6">
-                
                 <div>
                     <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Filters</div>
                     <div class="rounded-lg p-3 cursor-pointer transition-all duration-200 flex justify-between items-center group" 
@@ -86,19 +75,16 @@
                 <h2 class="font-bold text-white text-sm" id="list-title">Endpoints</h2>
                 <button onclick="refresh()" class="text-xs text-primary hover:text-white transition"><i class="fas fa-sync-alt"></i></button>
             </div>
-            
             <div id="endpoints-container" class="p-4 space-y-2 flex-grow"></div>
         </div>
 
         <div class="col-scroll bg-dark flex flex-col relative">
-            
             <div id="detail-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-gray-600 pointer-events-none">
                 <i class="fas fa-cube text-6xl mb-4 opacity-20"></i>
                 <p>Selecteer een endpoint</p>
             </div>
 
             <div id="detail-content" class="hidden flex flex-col min-h-full">
-                
                 <div class="p-6 border-b border-gray-700/50 bg-dark_paper">
                     <div class="flex justify-between items-start mb-6">
                         <div>
@@ -124,6 +110,10 @@
                     </div>
 
                     <div class="flex flex-wrap gap-2">
+                        <button onclick="triggerImport()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                            <i class="fas fa-file-import"></i> Import
+                        </button>
+
                         <button onclick="downloadEndpoint()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
                             <i class="fas fa-download"></i> Export
                         </button>
@@ -147,7 +137,6 @@
                 </div>
 
                 <div id="tab-data" class="flex-grow p-6 flex flex-col overflow-hidden h-full">
-                    
                     <div class="flex gap-3 mb-4">
                         <div class="relative flex-grow">
                             <i class="fas fa-search absolute left-3 top-2.5 text-gray-500 text-sm"></i>
@@ -160,7 +149,6 @@
                     </div>
 
                     <div id="editor-area" class="flex gap-6 flex-grow overflow-hidden">
-                        
                         <div class="w-1/3 flex flex-col gap-2 overflow-y-auto pr-2 custom-scrollbar" id="search-results">
                             <div class="text-xs text-gray-500 text-center mt-10 p-4 border border-dashed border-gray-700 rounded-lg">
                                 <i class="fas fa-search mb-2 text-lg opacity-50"></i><br>
@@ -187,7 +175,6 @@
                 </div>
 
                 <div id="tab-settings" class="p-6 hidden max-w-2xl mx-auto w-full space-y-6">
-                    
                     <div class="bg-dark_paper border border-gray-700 rounded-xl p-6 shadow-sm">
                         <div class="flex items-center gap-4">
                             <div class="bg-red-500/10 p-3 rounded-lg text-red-500">
@@ -466,6 +453,47 @@
             const res = await fetch(`${API}/api/admin/cleanup`, { method: 'POST' });
             const d = await res.json();
             alert(d.report.length ? d.report.join('\n') : "Alles is schoon.");
+        }
+
+        // --- IMPORT LOGICA (NIEUW) ---
+        function triggerImport() {
+            document.getElementById('import-input').click();
+        }
+
+        async function handleImportFile() {
+            const input = document.getElementById('import-input');
+            const file = input.files[0];
+            if(!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    if(!Array.isArray(json)) throw new Error("Bestand moet een JSON lijst ([...]) zijn");
+
+                    if(!confirm(`Wil je ${json.length} records importeren in '${currentEp}'?`)) return;
+
+                    const res = await fetch(`${API}/api/admin/import`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ collection: currentEp, records: json })
+                    });
+                    
+                    const d = await res.json();
+                    if(res.ok) {
+                        alert(`Succes! ${d.count} records geïmporteerd.`);
+                        refresh();
+                        doSearch(); // Ververs data view als die open staat
+                    } else {
+                        alert("Fout bij import: " + d.error);
+                    }
+                } catch(err) {
+                    alert("Ongeldig bestand: " + err.message);
+                }
+                // Reset input zodat je hetzelfde bestand nog eens kunt kiezen indien nodig
+                input.value = '';
+            };
+            reader.readAsText(file);
         }
 
         function renderErrorLog() {
