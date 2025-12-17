@@ -1,179 +1,228 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="nl" class="h-full dark">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>G2 Ultimate Console</title>
+    
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="tailwind_config.js"></script>
+    <link rel="stylesheet" href="app_styles.css">
+
     <style>
-        body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; overflow: hidden; }
-        
-        /* LAYOUT: Links (250px) | Midden (500px) | Rechts (Rest) */
+        :root { --color-primary: 99 102 241; }
         .main-layout { display: grid; grid-template-columns: 250px 500px 1fr; height: 100vh; }
         
-        .col-sidebar { background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; }
-        .col-list { background: #0d1117; border-right: 1px solid #30363d; overflow-y: auto; display: flex; flex-direction: column; }
-        .col-detail { background: #0d1117; overflow-y: auto; display: flex; flex-direction: column; }
-
-        /* Navigation Items */
-        .nav-item { padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
-        .nav-item:hover { background: #21262d; color: white; }
-        .nav-item.active { background: #21262d; border-left-color: #238636; color: white; font-weight: 600; }
+        /* Custom Scrollbar override voor layout panels */
+        .col-scroll { overflow-y: auto; }
         
-        /* Endpoint List Item */
-        .ep-item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; position: relative; }
-        .ep-item:hover { background: #161b22; }
-        .ep-item.active { background: #1f242c; border-left: 3px solid #1f6feb; }
-        
-        /* Status & Visuals */
+        /* Status Dots */
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .status-green { background: #238636; box-shadow: 0 0 5px #238636; }
-        .status-orange { background: #d29922; }
-        .status-red { background: #da3633; }
-        .size-bar { height: 2px; background: #30363d; margin-top: 6px; width: 100%; border-radius: 2px; overflow: hidden; }
-        .size-fill { height: 100%; background: #1f6feb; }
+        .status-green { background: #10b981; box-shadow: 0 0 5px #10b981; }
+        .status-orange { background: #f59e0b; }
+        .status-red { background: #ef4444; }
 
-        .tag { font-size: 0.7rem; padding: 1px 5px; border-radius: 4px; background: #30363d; color: #8b949e; }
-        .tag-lock { background: #da3633; color: white; }
-        
-        .btn { padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; cursor: pointer; transition: 0.2s; display: inline-flex; items-center; gap: 4px; }
-        .btn-blue { background: #1f6feb; color: white; } .btn-blue:hover { background: #388bfd; }
-        .btn-red { background: #da3633; color: white; } .btn-red:hover { background: #f85149; }
-        .btn-gray { background: #21262d; border: 1px solid #30363d; } .btn-gray:hover { border-color: #8b949e; background: #30363d; }
-        
+        /* Heatmap Bar */
+        .size-bar { height: 3px; background: rgba(255,255,255,0.1); margin-top: 8px; width: 100%; border-radius: 2px; overflow: hidden; }
+        .size-fill { height: 100%; background: rgb(var(--color-primary)); }
+
         /* Editor */
-        textarea.editor { background: #0d1117; color: #79c0ff; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; width: 100%; border: 1px solid #30363d; padding: 12px; font-size: 13px; outline: none; resize: vertical; min-height: 400px; line-height: 1.5; }
-        textarea.editor:focus { border-color: #1f6feb; }
+        textarea.editor { 
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace; 
+            font-size: 13px; 
+            line-height: 1.5;
+            outline: none; 
+            resize: none; 
+        }
     </style>
 </head>
-<body>
+<body class="h-full text-gray-200 font-sans bg-dark transition-colors duration-300 overflow-hidden">
 
     <div class="main-layout">
         
-        <div class="col-sidebar">
-            <div class="p-4 border-b border-[#30363d]">
-                <h1 class="font-bold text-white text-lg">G2 Admin</h1>
-                <div class="flex justify-between text-xs text-gray-500 mt-1">
+        <div class="col-scroll bg-dark border-r border-gray-700/50 flex flex-col">
+            <div class="p-6 border-b border-gray-700/50">
+                <h1 class="font-bold text-white text-xl tracking-tight"><i class="fas fa-server mr-2 text-primary"></i> G2 Admin</h1>
+                <div class="flex justify-between text-xs text-gray-500 mt-2 font-mono">
                     <span id="stat-db-size">- MB</span>
-                    <button onclick="runCleanup()" class="text-blue-400 hover:text-white" title="Run TTL Cleanup">🧹 Clean</button>
+                    <button onclick="runCleanup()" class="text-primary hover:text-white transition-colors" title="Run TTL Cleanup">
+                        <i class="fas fa-broom"></i> Clean
+                    </button>
                 </div>
             </div>
             
-            <div class="py-2">
-                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2 mt-2">Filters</div>
+            <div class="p-4 space-y-6">
                 
-                <div class="nav-item active" id="filter-all" onclick="applyFilter('ALL', null)">
-                    <span>Alle Endpoints</span>
-                    <span id="count-all" class="tag">0</span>
+                <div>
+                    <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Filters</div>
+                    <div class="rounded-lg p-3 cursor-pointer transition-all duration-200 flex justify-between items-center group" 
+                         id="filter-all" onclick="applyFilter('ALL', null)">
+                        <span class="font-medium group-hover:text-primary transition-colors"><i class="fas fa-layer-group mr-2 opacity-70"></i> Alle Endpoints</span>
+                        <span id="count-all" class="bg-gray-700/50 text-gray-300 text-xs px-2 py-0.5 rounded-full">0</span>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Applicaties</div>
+                    <div id="list-apps" class="space-y-1"></div>
+                </div>
+
+                <div>
+                    <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Clients</div>
+                    <div id="list-users" class="space-y-1"></div>
                 </div>
             </div>
-
-            <div class="py-2">
-                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2">Applicaties</div>
-                <div id="list-apps"></div>
+            
+            <div class="mt-auto border-t border-gray-700/50 p-4">
+                <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Error Log</div>
+                <div id="list-errors" class="space-y-2 text-xs font-mono text-red-400 opacity-80"></div>
             </div>
+        </div>
 
-            <div class="py-2">
-                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2">Clients</div>
-                <div id="list-users"></div>
+        <div class="col-scroll bg-dark border-r border-gray-700/50 flex flex-col">
+            <div class="p-4 border-b border-gray-700/50 bg-dark/95 backdrop-blur sticky top-0 z-10 flex justify-between items-center">
+                <h2 class="font-bold text-white text-sm" id="list-title">Endpoints</h2>
+                <button onclick="refresh()" class="text-xs text-primary hover:text-white transition"><i class="fas fa-sync-alt"></i></button>
             </div>
             
-            <div class="py-2 mt-auto border-t border-[#30363d]">
-                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2 mt-2">Error Log</div>
-                <div id="list-errors" class="px-4 text-xs space-y-2 text-red-400"></div>
-            </div>
+            <div id="endpoints-container" class="p-4 space-y-2 flex-grow"></div>
         </div>
 
-        <div class="col-list">
-            <div class="p-3 border-b border-[#30363d] bg-[#0d1117] sticky top-0 z-10 flex justify-between">
-                <h2 class="font-bold text-white text-sm" id="list-title">Endpoints</h2>
-                <button onclick="refresh()" class="text-xs text-blue-400">↻</button>
-            </div>
-            <div id="endpoints-container" class="flex-grow"></div>
-        </div>
-
-        <div class="col-detail">
-            <div id="detail-placeholder" class="m-auto text-gray-600 text-center">
-                <div class="text-4xl mb-2">←</div>Selecteer een endpoint
+        <div class="col-scroll bg-dark flex flex-col relative">
+            
+            <div id="detail-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-gray-600 pointer-events-none">
+                <i class="fas fa-cube text-6xl mb-4 opacity-20"></i>
+                <p>Selecteer een endpoint</p>
             </div>
 
-            <div id="detail-content" class="hidden flex flex-col h-full">
-                <div class="p-6 border-b border-[#30363d] bg-[#161b22]">
-                    <div class="flex justify-between items-start mb-4">
+            <div id="detail-content" class="hidden flex flex-col min-h-full">
+                
+                <div class="p-6 border-b border-gray-700/50 bg-dark_paper">
+                    <div class="flex justify-between items-start mb-6">
                         <div>
                             <div class="flex items-center gap-3">
-                                <h2 id="det-name" class="text-2xl font-bold text-white">...</h2>
-                                <button onclick="renameEndpoint()" class="text-gray-500 hover:text-white" title="Hernoem Endpoint">✎</button>
+                                <h2 id="det-name" class="text-2xl font-bold text-white tracking-tight">...</h2>
+                                <button onclick="renameEndpoint()" class="text-gray-500 hover:text-white transition p-1 rounded hover:bg-gray-700/50">
+                                    <i class="fas fa-pencil-alt"></i>
+                                </button>
                             </div>
-                            <div class="flex gap-2 mt-2">
-                                <span id="det-lock-badge" class="tag tag-lock hidden">LOCKED</span>
-                                <span id="det-ttl-badge" class="tag hidden">TTL: <span id="det-ttl-val"></span>d</span>
+                            <div class="flex gap-2 mt-3">
+                                <span id="det-lock-badge" class="hidden px-2 py-0.5 rounded text-xs font-bold bg-red-500/20 text-red-400 border border-red-500/30">
+                                    <i class="fas fa-lock mr-1"></i> LOCKED
+                                </span>
+                                <span id="det-ttl-badge" class="hidden px-2 py-0.5 rounded text-xs font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                    <i class="fas fa-hourglass-half mr-1"></i> TTL: <span id="det-ttl-val"></span>d
+                                </span>
                             </div>
                         </div>
                         <div class="text-right">
-                            <div id="det-count" class="text-3xl font-bold text-white">-</div>
-                            <div class="text-xs text-gray-500">records</div>
+                            <div id="det-count" class="text-4xl font-bold text-white tracking-tighter">-</div>
+                            <div class="text-xs text-gray-500 font-medium uppercase tracking-wider mt-1">records</div>
                         </div>
                     </div>
 
-                    <div class="flex gap-2">
-                        <button onclick="downloadEndpoint()" class="btn btn-gray">⬇ Exporteren</button>
-                        <button onclick="doClone()" class="btn btn-gray">content_copy Dupliceren</button>
-                        <button onclick="doSnapshot()" class="btn btn-gray">📷 Snapshot</button>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="downloadEndpoint()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                        <button onclick="doClone()" class="bg-dark border border-gray-600 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                            <i class="fas fa-copy"></i> Dupliceer
+                        </button>
                         <div class="flex-grow"></div>
-                        <button onclick="dropEndpoint()" class="btn btn-red">🗑 Verwijderen</button>
+                        <button onclick="dropEndpoint()" class="bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                            <i class="fas fa-trash-alt"></i> Verwijder
+                        </button>
                     </div>
                 </div>
 
-                <div class="flex border-b border-[#30363d] px-6 gap-6 text-sm font-bold text-gray-500 bg-[#0d1117]">
-                    <button class="py-4 border-b-2 border-[#1f6feb] text-white tab-btn" onclick="switchTab('data')">Data & Editor</button>
-                    <button class="py-4 border-b-2 border-transparent hover:text-gray-300 tab-btn" onclick="switchTab('settings')">Instellingen</button>
+                <div class="flex border-b border-gray-700/50 px-6 gap-8 text-sm font-medium text-gray-500 bg-dark">
+                    <button class="py-4 border-b-2 border-primary text-white tab-btn transition-colors" onclick="switchTab('data')">
+                        <i class="fas fa-database mr-2"></i> Data & Editor
+                    </button>
+                    <button class="py-4 border-b-2 border-transparent hover:text-gray-300 tab-btn transition-colors" onclick="switchTab('settings')">
+                        <i class="fas fa-sliders-h mr-2"></i> Instellingen
+                    </button>
                 </div>
 
-                <div id="tab-data" class="p-6 space-y-4 flex-grow overflow-auto">
-                    <div class="flex gap-2">
-                        <input type="text" id="search-term" placeholder="Deep Search (ID of tekst)..." class="bg-[#161b22] border border-[#30363d] rounded p-2 text-sm text-white flex-grow focus:border-blue-500 outline-none">
-                        <button onclick="doSearch()" class="btn btn-blue">Zoeken</button>
+                <div id="tab-data" class="flex-grow p-6 flex flex-col overflow-hidden h-full">
+                    
+                    <div class="flex gap-3 mb-4">
+                        <div class="relative flex-grow">
+                            <i class="fas fa-search absolute left-3 top-2.5 text-gray-500 text-sm"></i>
+                            <input type="text" id="search-term" placeholder="Deep Search (ID of tekst)..." 
+                                class="w-full bg-dark_paper border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:border-primary focus:outline-none transition-colors shadow-sm">
+                        </div>
+                        <button onclick="doSearch()" class="bg-primary hover:opacity-90 text-white px-5 rounded-lg text-sm font-bold transition shadow-lg shadow-primary/20">
+                            Zoeken
+                        </button>
                     </div>
 
-                    <div id="editor-area" class="flex gap-6 h-full pb-10">
-                        <div class="w-1/3 flex flex-col gap-2 overflow-y-auto h-full pr-2" id="search-results">
-                            <div class="text-xs text-gray-500 text-center mt-4">Voer een zoekopdracht uit...</div>
+                    <div id="editor-area" class="flex gap-6 flex-grow overflow-hidden">
+                        
+                        <div class="w-1/3 flex flex-col gap-2 overflow-y-auto pr-2 custom-scrollbar" id="search-results">
+                            <div class="text-xs text-gray-500 text-center mt-10 p-4 border border-dashed border-gray-700 rounded-lg">
+                                <i class="fas fa-search mb-2 text-lg opacity-50"></i><br>
+                                Voer een zoekopdracht uit...
+                            </div>
                         </div>
 
-                        <div class="w-2/3 flex flex-col gap-2 h-full">
-                            <div class="flex justify-between items-center h-8">
-                                <h3 class="text-xs font-bold text-gray-400 uppercase">Editor</h3>
+                        <div class="w-2/3 flex flex-col h-full bg-dark_paper border border-gray-700 rounded-xl overflow-hidden shadow-sm">
+                            <div class="flex justify-between items-center px-4 py-2 border-b border-gray-700 bg-dark">
+                                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Editor</h3>
                                 <div id="editor-actions" class="hidden">
-                                    <button onclick="saveRecord()" class="btn btn-blue text-xs">Opslaan (PUT)</button>
+                                    <button onclick="saveRecord()" class="text-primary hover:text-white text-xs font-bold flex items-center gap-1 transition-colors">
+                                        <i class="fas fa-save"></i> Opslaan
+                                    </button>
                                 </div>
                             </div>
-                            <textarea id="json-editor" class="editor rounded hidden"></textarea>
-                            <div id="editor-placeholder" class="text-center text-gray-600 mt-20 text-sm border border-dashed border-[#30363d] p-10 rounded">
+                            <textarea id="json-editor" class="editor flex-grow bg-dark_paper text-gray-300 p-4 hidden"></textarea>
+                            <div id="editor-placeholder" class="flex flex-col items-center justify-center h-full text-gray-600 text-sm p-10">
+                                <i class="fas fa-mouse-pointer mb-3 text-2xl opacity-30"></i>
                                 Selecteer een record links om te bewerken
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div id="tab-settings" class="p-6 space-y-6 hidden max-w-2xl">
-                    <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
-                        <h3 class="font-bold text-white mb-2">Endpoint Lock</h3>
-                        <p class="text-xs text-gray-500 mb-4">Blokkeer schrijven (Read-Only).</p>
-                        <label class="flex items-center gap-2 text-white cursor-pointer select-none">
-                            <input type="checkbox" id="set-locked" class="w-4 h-4"> 
-                            <span class="font-bold text-red-400">Lock activeren</span>
-                        </label>
-                    </div>
-
-                    <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
-                        <h3 class="font-bold text-white mb-2">Time To Live (TTL)</h3>
-                        <p class="text-xs text-gray-500 mb-4">Auto-delete na X dagen.</p>
-                        <div class="flex items-center gap-2">
-                            <input type="number" id="set-ttl" class="bg-[#0d1117] border border-[#30363d] rounded p-2 text-white w-24 focus:border-blue-500 outline-none" placeholder="0">
-                            <span class="text-sm text-gray-500">dagen (0 = Uit)</span>
+                <div id="tab-settings" class="p-6 hidden max-w-2xl mx-auto w-full space-y-6">
+                    
+                    <div class="bg-dark_paper border border-gray-700 rounded-xl p-6 shadow-sm">
+                        <div class="flex items-center gap-4">
+                            <div class="bg-red-500/10 p-3 rounded-lg text-red-500">
+                                <i class="fas fa-lock text-xl"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <h3 class="font-bold text-white">Endpoint Lock</h3>
+                                <p class="text-xs text-gray-500 mt-1">Read-Only modus. Blokkeert POST/PUT/DELETE.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="set-locked" class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                            </label>
                         </div>
                     </div>
-                    <button onclick="saveSettings()" class="btn btn-blue w-full py-2">Instellingen Opslaan</button>
+
+                    <div class="bg-dark_paper border border-gray-700 rounded-xl p-6 shadow-sm">
+                        <div class="flex items-center gap-4">
+                            <div class="bg-blue-500/10 p-3 rounded-lg text-blue-500">
+                                <i class="fas fa-clock text-xl"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <h3 class="font-bold text-white">Time To Live (TTL)</h3>
+                                <p class="text-xs text-gray-500 mt-1">Automatisch verwijderen na X dagen.</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <input type="number" id="set-ttl" class="bg-dark border border-gray-600 rounded-lg p-2 text-white w-20 text-center focus:border-primary outline-none" placeholder="0">
+                                <span class="text-sm text-gray-500">dg</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button onclick="saveSettings()" class="w-full bg-primary hover:opacity-90 text-white py-3 rounded-xl font-bold shadow-lg shadow-primary/20 transition-all">
+                        Instellingen Opslaan
+                    </button>
                 </div>
             </div>
         </div>
@@ -186,7 +235,6 @@
         let currentEp = null;
         let currentRecordId = null;
 
-        // --- INIT ---
         async function refresh() {
             const res = await fetch(`${API}/api/admin/stats`);
             globalData = await res.json();
@@ -201,9 +249,7 @@
             if(currentEp) loadDetail(currentEp);
         }
 
-        // --- SIDEBAR & FILTER LOGIC ---
         function renderSidebar() {
-            // Apps
             const apps = {};
             globalData.endpoints.forEach(ep => {
                 if(ep.name.includes('_')) {
@@ -211,37 +257,44 @@
                     apps[app] = (apps[app] || 0) + 1;
                 }
             });
-            document.getElementById('list-apps').innerHTML = Object.keys(apps).map(a => 
-                `<div class="nav-item ${isFilter('APP', a)}" onclick="applyFilter('APP', '${a}')">
-                    <span>${a}</span> <span class="tag">${apps[a]}</span>
+
+            const appsHTML = Object.keys(apps).map(a => 
+                `<div class="rounded-lg p-2 pl-3 cursor-pointer transition-colors flex justify-between items-center hover:bg-dark_paper group ${isFilter('APP', a)}" onclick="applyFilter('APP', '${a}')">
+                    <span class="text-sm text-gray-400 group-hover:text-white"><i class="fas fa-cube mr-2 opacity-50"></i>${a}</span>
+                    <span class="bg-gray-800 text-gray-500 text-[10px] px-2 py-0.5 rounded-full">${apps[a]}</span>
                 </div>`
             ).join('');
+            document.getElementById('list-apps').innerHTML = appsHTML;
 
-            // Clients
-            document.getElementById('list-users').innerHTML = globalData.clients.map(c => `
-                <div class="nav-item ${isFilter('USER', c.client_id)}" onclick="applyFilter('USER', '${c.client_id}')">
-                    <div class="flex flex-col">
-                        <span>${c.client_id}</span>
-                        <span class="text-[9px] text-gray-500">${c.last_seen ? timeAgo(c.last_seen) : 'Nooit'}</span>
+            const clientsHTML = globalData.clients.map(c => `
+                <div class="rounded-lg p-2 pl-3 cursor-pointer transition-colors flex justify-between items-center hover:bg-dark_paper group ${isFilter('USER', c.client_id)}" onclick="applyFilter('USER', '${c.client_id}')">
+                    <div class="flex flex-col overflow-hidden">
+                        <span class="text-sm text-gray-400 group-hover:text-white truncate" title="${c.client_id}"><i class="fas fa-user-circle mr-2 opacity-50"></i>${c.client_id}</span>
+                        <span class="text-[9px] text-gray-600 pl-6">${c.last_seen ? timeAgo(c.last_seen) : 'Nooit'}</span>
                     </div>
-                    <span class="tag">${c.total_records}</span>
+                    <span class="bg-gray-800 text-gray-500 text-[10px] px-2 py-0.5 rounded-full ml-2">${c.total_records}</span>
                 </div>
             `).join('');
+            document.getElementById('list-users').innerHTML = clientsHTML;
 
-            // FIX: Zorg dat de "Alle Endpoints" knop visueel update
             const allBtn = document.getElementById('filter-all');
-            if(currentFilter.type === 'ALL') allBtn.classList.add('active');
-            else allBtn.classList.remove('active');
+            if(currentFilter.type === 'ALL') {
+                allBtn.classList.add('bg-dark_paper', 'border-l-4', 'border-primary'); 
+                allBtn.querySelector('span').classList.add('text-primary');
+            } else {
+                allBtn.classList.remove('bg-dark_paper', 'border-l-4', 'border-primary');
+                allBtn.querySelector('span').classList.remove('text-primary');
+            }
         }
 
         function applyFilter(type, value) {
             currentFilter = { type, value };
-            renderSidebar(); // Update visual active states
+            renderSidebar();
             renderEndpointsList();
         }
 
         function isFilter(type, value) {
-            return (currentFilter.type === type && currentFilter.value === value) ? 'active' : '';
+            return (currentFilter.type === type && currentFilter.value === value) ? 'bg-dark_paper border-l-2 border-primary' : '';
         }
 
         function renderEndpointsList() {
@@ -249,15 +302,9 @@
             let filtered = [];
             let title = "Alle Endpoints";
 
-            if (currentFilter.type === 'ALL') {
-                filtered = globalData.endpoints;
-            } else if (currentFilter.type === 'APP') {
-                filtered = globalData.endpoints.filter(ep => ep.name.startsWith(currentFilter.value + '_'));
-                title = `App: ${currentFilter.value}`;
-            } else if (currentFilter.type === 'USER') {
-                filtered = globalData.endpoints.filter(ep => ep.owners && ep.owners.includes(currentFilter.value));
-                title = `Client: ${currentFilter.value}`;
-            }
+            if (currentFilter.type === 'ALL') filtered = globalData.endpoints;
+            else if (currentFilter.type === 'APP') { filtered = globalData.endpoints.filter(ep => ep.name.startsWith(currentFilter.value + '_')); title = `App: ${currentFilter.value}`; }
+            else if (currentFilter.type === 'USER') { filtered = globalData.endpoints.filter(ep => ep.owners && ep.owners.includes(currentFilter.value)); title = `Client: ${currentFilter.value}`; }
 
             document.getElementById('list-title').innerText = title;
 
@@ -269,15 +316,18 @@
                     else if(diff < 60 * 24) statusColor = 'status-orange';
                 }
 
+                const isActive = currentEp === ep.name;
+                const activeClass = isActive ? 'bg-dark_paper border-l-4 border-primary shadow-md' : 'border-l-4 border-transparent hover:bg-dark_paper';
+
                 return `
-                <div class="ep-item ${currentEp === ep.name ? 'active' : ''}" onclick="selectEp('${ep.name}')">
-                    <div class="flex justify-between items-center mb-1">
-                        <div class="font-mono text-sm text-blue-300 truncate w-64" title="${ep.name}">${ep.name}</div>
-                        <div class="${statusColor} status-dot" title="Actief: ${ep.last_activity || 'Nooit'}"></div>
+                <div class="rounded-lg p-4 cursor-pointer transition-all mb-2 ${activeClass}" onclick="selectEp('${ep.name}')">
+                    <div class="flex justify-between items-center mb-2">
+                        <div class="font-mono text-sm ${isActive ? 'text-primary' : 'text-gray-300'} font-bold truncate w-40">${ep.name}</div>
+                        <div class="${statusColor} status-dot" title="Last Active"></div>
                     </div>
-                    <div class="flex justify-between items-center text-xs text-gray-500">
+                    <div class="flex justify-between items-center text-xs text-gray-500 mb-2">
                         <span>${ep.count} records</span>
-                        ${ep.locked ? '<span class="text-red-500 font-bold">🔒</span>' : ''}
+                        ${ep.locked ? '<i class="fas fa-lock text-red-500"></i>' : ''}
                     </div>
                     <div class="size-bar"><div class="size-fill" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
@@ -294,7 +344,7 @@
             document.getElementById('json-editor').classList.add('hidden');
             document.getElementById('editor-placeholder').classList.remove('hidden');
             document.getElementById('editor-actions').classList.add('hidden');
-            document.getElementById('search-results').innerHTML = '<div class="text-xs text-gray-500 text-center mt-4">Klik op zoeken...</div>';
+            document.getElementById('search-results').innerHTML = '<div class="text-xs text-gray-500 text-center mt-10"><i class="fas fa-search mb-2"></i><br>Zoek records...</div>';
             
             loadDetail(name);
         }
@@ -310,7 +360,6 @@
             document.getElementById('set-ttl').value = ep.ttl || '';
         }
 
-        // --- SEARCH & DATA ---
         async function doSearch() {
             const term = document.getElementById('search-term').value;
             const res = await fetch(`${API}/api/admin/search`, {
@@ -323,19 +372,18 @@
             if(docs.length === 0) {
                 container.innerHTML = '<div class="text-center text-gray-500 mt-4 text-xs">Geen resultaten</div>';
             } else {
-                // FIX: Schone weergave in linker zoeklijst
                 container.innerHTML = docs.map(d => `
-                    <div class="p-3 border border-[#30363d] rounded bg-[#161b22] hover:bg-[#21262d] cursor-pointer mb-2 transition-colors group" onclick="loadRecord('${d._id}')">
+                    <div class="p-3 border border-gray-700 bg-dark_paper rounded-lg hover:border-primary cursor-pointer mb-2 transition-all group" onclick="loadRecord('${d._id}')">
                         <div class="flex justify-between items-center mb-1">
-                            <span class="text-[11px] font-mono text-blue-400 font-bold group-hover:text-blue-300">${d._id}</span>
+                            <span class="text-[11px] font-mono text-primary font-bold">${d._id}</span>
                         </div>
-                        <div class="flex flex-col gap-0.5">
-                            <div class="flex items-center text-[10px] text-gray-400">
-                                <span class="w-8 inline-block text-gray-600">User:</span> 
-                                <span class="text-yellow-600 font-mono">${d._client_id || '?'}</span>
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center text-[10px] text-gray-500">
+                                <i class="fas fa-user w-4 text-center mr-1 opacity-50"></i>
+                                <span class="text-yellow-500 font-mono">${d._client_id || '?'}</span>
                             </div>
                             <div class="flex items-center text-[10px] text-gray-500">
-                                <span class="w-8 inline-block text-gray-600">Tijd:</span> 
+                                <i class="fas fa-clock w-4 text-center mr-1 opacity-50"></i>
                                 <span>${d._created_at || '-'}</span>
                             </div>
                         </div>
@@ -346,13 +394,11 @@
 
         async function loadRecord(id) {
             currentRecordId = id;
-            // Fetch fresh record
             const res = await fetch(`${API}/api/admin/search`, {
                 method: 'POST', headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({ collection: currentEp, term: id })
             });
             const docs = await res.json();
-            
             if(docs[0]) {
                 document.getElementById('json-editor').value = JSON.stringify(docs[0], null, 4);
                 document.getElementById('json-editor').classList.remove('hidden');
@@ -373,7 +419,6 @@
             } catch(e) { alert("Ongeldige JSON"); }
         }
 
-        // --- TOOLS ---
         async function renameEndpoint() {
             const newName = prompt("Nieuwe naam:", currentEp);
             if(newName && newName !== currentEp) {
@@ -405,15 +450,6 @@
                 refresh();
             }
         }
-        
-        async function doSnapshot() {
-            const res = await fetch(`${API}/api/admin/snapshot`, {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({ collection: currentEp })
-            });
-            const d = await res.json();
-            alert("Snapshot: " + d.snapshot);
-        }
 
         async function saveSettings() {
             const locked = document.getElementById('set-locked').checked;
@@ -423,7 +459,7 @@
                 body: JSON.stringify({ collection: currentEp, locked, ttl_days: ttl })
             });
             refresh();
-            alert("Opgeslagen");
+            alert("Instellingen Opgeslagen");
         }
         
         async function runCleanup() {
@@ -433,20 +469,28 @@
         }
 
         function renderErrorLog() {
-            document.getElementById('list-errors').innerHTML = globalData.errors.length ? globalData.errors.map(e => 
-                `<div class="truncate" title="${e.msg}"><span class="text-gray-500">[${e.time.split('T')[1].substr(0,5)}]</span> ${e.msg}</div>`
-            ).join('') : '<span class="text-gray-600">Geen meldingen</span>';
+            const container = document.getElementById('list-errors');
+            if(globalData.errors.length === 0) {
+                container.innerHTML = '<span class="text-gray-600 italic">Geen errors</span>';
+                return;
+            }
+            container.innerHTML = globalData.errors.map(e => 
+                `<div class="truncate border-l-2 border-red-500 pl-2 py-1" title="${e.msg}">
+                    <span class="text-gray-500 block text-[9px]">${e.time.split('T')[1].substr(0,8)}</span> 
+                    ${e.msg}
+                </div>`
+            ).join('');
         }
 
         function switchTab(t) {
             ['data','settings'].forEach(x => document.getElementById(`tab-${x}`).classList.add('hidden'));
             document.getElementById(`tab-${t}`).classList.remove('hidden');
             document.querySelectorAll('.tab-btn').forEach(b => {
-                b.classList.remove('border-[#1f6feb]', 'text-white');
+                b.classList.remove('border-primary', 'text-white');
                 b.classList.add('border-transparent');
             });
             event.target.classList.remove('border-transparent');
-            event.target.classList.add('border-[#1f6feb]', 'text-white');
+            event.target.classList.add('border-primary', 'text-white');
         }
 
         function timeAgo(d) {
@@ -456,7 +500,6 @@
 
         refresh();
         setInterval(refresh, 60000);
-
     </script>
 </body>
 </html>
