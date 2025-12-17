@@ -2,187 +2,270 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>G2 Database Beheer</title>
+    <title>G2 Beheerconsole</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; }
-        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; }
-        .table-head { background-color: #21262d; color: #8b949e; text-transform: uppercase; font-size: 0.75rem; }
-        .btn { padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem; transition: 0.2s; }
-        .btn-blue { background-color: #1f6feb; color: white; } .btn-blue:hover { background-color: #388bfd; }
-        .btn-red { background-color: #da3633; color: white; } .btn-red:hover { background-color: #f85149; }
-        .btn-gray { background-color: #30363d; color: white; } .btn-gray:hover { background-color: #8b949e; }
-        .icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; }
-        pre { background: #000; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px; font-size: 12px; }
+        body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; overflow: hidden; }
+        
+        /* Layout Grid */
+        .main-layout { display: grid; grid-template-columns: 250px 1fr 400px; height: 100vh; }
+        
+        /* Columns */
+        .col-sidebar { background-color: #161b22; border-right: 1px solid #30363d; overflow-y: auto; }
+        .col-list { background-color: #0d1117; overflow-y: auto; border-right: 1px solid #30363d; }
+        .col-detail { background-color: #0d1117; overflow-y: auto; padding: 1.5rem; }
+
+        /* UI Elements */
+        .nav-item { padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent; font-size: 0.9rem; display: flex; justify-content: space-between; }
+        .nav-item:hover { background-color: #21262d; color: white; }
+        .nav-item.active { background-color: #21262d; border-left-color: #238636; color: white; font-weight: 600; }
+        
+        .ep-item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; transition: 0.1s; }
+        .ep-item:hover { background-color: #161b22; }
+        .ep-item.active { background-color: #1f242c; border-left: 3px solid #1f6feb; }
+
+        .tag { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; background: #30363d; color: #8b949e; }
+        .btn { padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; cursor: pointer; }
+        .btn-blue { background-color: #1f6feb; color: white; }
+        .btn-red { background-color: #da3633; color: white; }
+        
+        pre { background: #000; padding: 10px; border-radius: 6px; overflow: auto; font-size: 11px; color: #7ee787; border: 1px solid #30363d; }
+        .json-key { color: #79c0ff; }
+        .json-string { color: #a5d6ff; }
+        .json-number { color: #d2a8ff; }
     </style>
 </head>
-<body class="p-6 max-w-7xl mx-auto">
+<body>
 
-    <header class="flex justify-between items-center mb-8 pb-4 border-b border-[#30363d]">
-        <div>
-            <h1 class="text-2xl font-bold text-white">G2 Database Station</h1>
-            <p class="text-xs text-gray-500">Gateway Administration & Monitoring</p>
-        </div>
-        <div class="text-right text-xs text-gray-400">
-            <div>DB Grootte: <span id="stat-size" class="text-white font-bold">-</span> MB</div>
-            <div>Totaal Records: <span id="stat-total" class="text-white font-bold">-</span></div>
-        </div>
-    </header>
-
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-        <div class="lg:col-span-2 space-y-6">
-            
-            <div class="card p-0 overflow-hidden">
-                <div class="p-4 border-b border-[#30363d] flex justify-between items-center">
-                    <h2 class="font-bold text-white">Datastore Endpoints</h2>
-                    <button onclick="refresh()" class="text-xs text-blue-400 hover:text-blue-300">Verversen ↻</button>
-                </div>
-                <table class="w-full text-left border-collapse">
-                    <thead class="table-head">
-                        <tr>
-                            <th class="p-3">Naam</th>
-                            <th class="p-3">Records</th>
-                            <th class="p-3 text-right">Acties</th>
-                        </tr>
-                    </thead>
-                    <tbody id="endpoints-list" class="divide-y divide-[#30363d] text-sm"></tbody>
-                </table>
-            </div>
-
-            <div id="peek-panel" class="card p-4 hidden border-l-4 border-blue-500">
-                <div class="flex justify-between mb-2">
-                    <h3 class="font-bold text-blue-400">Data Inspectie: <span id="peek-name"></span></h3>
-                    <button onclick="document.getElementById('peek-panel').classList.add('hidden')" class="text-gray-500">X</button>
-                </div>
-                <pre id="peek-content" class="text-green-400"></pre>
-                <div class="text-xs text-gray-500 mt-1">* Toont max 5 recente records</div>
-            </div>
-
-        </div>
-
-        <div class="space-y-6">
-            
-            <div class="card p-4">
-                <h2 class="font-bold text-white mb-4">Gebruik per Client</h2>
-                <div class="overflow-auto max-h-60">
-                    <table class="w-full text-sm">
-                        <thead class="text-gray-500 text-xs text-left"><tr><th>Client ID</th><th class="text-right">Totaal Items</th></tr></thead>
-                        <tbody id="client-stats-list" class="divide-y divide-[#30363d]"></tbody>
-                    </table>
+    <div class="main-layout">
+        
+        <div class="col-sidebar">
+            <div class="p-4 border-b border-[#30363d]">
+                <h1 class="font-bold text-white text-lg">G2 Console</h1>
+                <div class="text-xs text-gray-500 flex justify-between mt-1">
+                    <span id="stat-db-size">- MB</span>
+                    <span id="stat-total-obj">- Docs</span>
                 </div>
             </div>
 
-            <div class="card p-4 text-xs text-gray-400 space-y-2">
-                <p><strong class="text-white">Exporteren:</strong> Downloadt data in JSON formaat inclusief `_meta` velden (als `_client_id`), gereed voor import.</p>
-                <p><strong class="text-white">Drop:</strong> Verwijdert de endpoint definitief. Kan niet ongedaan worden gemaakt.</p>
+            <div class="py-2">
+                <div class="px-4 text-xs font-bold text-gray-500 uppercase mb-2 mt-2">Algemeen</div>
+                <div class="nav-item active" id="filter-all" onclick="applyFilter('ALL', null)">
+                    Alle Endpoints <span id="count-all" class="tag">0</span>
+                </div>
+            </div>
+
+            <div class="py-2">
+                <div class="px-4 text-xs font-bold text-gray-500 uppercase mb-2">Applicaties</div>
+                <div id="list-apps"></div>
+            </div>
+
+            <div class="py-2">
+                <div class="px-4 text-xs font-bold text-gray-500 uppercase mb-2">Users (Clients)</div>
+                <div id="list-users"></div>
             </div>
         </div>
-    </div>
 
-    <div id="modal-rename" class="fixed inset-0 bg-black/80 hidden flex items-center justify-center">
-        <div class="card p-6 w-96">
-            <h3 class="font-bold text-lg mb-4">Hernoem Endpoint</h3>
-            <input type="hidden" id="rename-old">
-            <label class="block text-xs text-gray-500 mb-1">Nieuwe naam</label>
-            <input type="text" id="rename-new" class="w-full bg-[#0d1117] border border-[#30363d] p-2 rounded text-white mb-4">
-            <div class="flex justify-end gap-2">
-                <button onclick="document.getElementById('modal-rename').classList.add('hidden')" class="btn btn-gray">Annuleren</button>
-                <button onclick="doRename()" class="btn btn-blue">Opslaan</button>
+        <div class="col-list">
+            <div class="p-4 border-b border-[#30363d] sticky top-0 bg-[#0d1117] z-10 flex justify-between items-center">
+                <h2 class="font-bold text-white" id="list-title">Alle Endpoints</h2>
+                <button onclick="refresh()" class="text-xs text-blue-400">↻ Verversen</button>
+            </div>
+            <div id="endpoints-container">
+                </div>
+        </div>
+
+        <div class="col-detail">
+            <div id="detail-placeholder" class="text-center mt-20 text-gray-500">
+                <div class="text-4xl mb-4">←</div>
+                Selecteer een endpoint<br>om details te zien
+            </div>
+
+            <div id="detail-content" class="hidden">
+                <div class="flex justify-between items-start mb-6">
+                    <div>
+                        <h2 id="det-name" class="text-2xl font-bold text-white mb-1">...</h2>
+                        <div class="text-xs text-gray-400 font-mono">/api/<span id="det-slug"></span></div>
+                    </div>
+                    <div class="text-right">
+                        <div id="det-count" class="text-2xl font-bold text-white">-</div>
+                        <div class="text-xs text-gray-500">Records</div>
+                    </div>
+                </div>
+
+                <div class="flex gap-2 mb-8 border-b border-[#30363d] pb-6">
+                    <button onclick="downloadEndpoint()" class="btn btn-blue flex-grow">⬇ Exporteren</button>
+                    <button onclick="renameEndpoint()" class="btn bg-gray-700 text-white hover:bg-gray-600">✎ Hernoemen</button>
+                    <button onclick="dropEndpoint()" class="btn btn-red">🗑 Verwijderen</button>
+                </div>
+
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-3">Live Data Preview</h3>
+                <pre id="det-preview">Laden...</pre>
+                
+                <h3 class="text-sm font-bold text-gray-400 uppercase mt-8 mb-3">Actieve Gebruikers</h3>
+                <div id="det-users" class="flex flex-wrap gap-2"></div>
             </div>
         </div>
     </div>
 
     <script>
         const API = window.location.origin;
+        
+        let globalData = null;
+        let currentFilter = { type: 'ALL', value: null };
+        let selectedEndpoint = null;
 
-        // --- DATA LOAD ---
+        // --- CORE LOGIC ---
+
         async function refresh() {
-            try {
-                const res = await fetch(`${API}/api/admin/stats`);
-                const data = await res.json();
-                
-                // Header Stats
-                document.getElementById('stat-size').innerText = data.db_info.data_size_mb;
-                document.getElementById('stat-total').innerText = data.db_info.total_objects;
+            const res = await fetch(`${API}/api/admin/stats`);
+            globalData = await res.json();
+            
+            // Header stats
+            document.getElementById('stat-db-size').innerText = globalData.db_info.data_size_mb + ' MB';
+            document.getElementById('stat-total-obj').innerText = globalData.db_info.total_objects;
+            document.getElementById('count-all').innerText = globalData.endpoints.length;
 
-                // Endpoints Table
-                const epList = document.getElementById('endpoints-list');
-                if(data.endpoints.length === 0) {
-                    epList.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-500">Nog geen data aanwezig</td></tr>';
-                } else {
-                    epList.innerHTML = data.endpoints.map(ep => `
-                        <tr class="hover:bg-[#1c2128]">
-                            <td class="p-3 font-mono text-blue-300">${ep.name}</td>
-                            <td class="p-3">${ep.count}</td>
-                            <td class="p-3 text-right space-x-1">
-                                <button onclick="peek('${ep.name}')" class="btn btn-gray" title="Inspecteren">👁</button>
-                                <button onclick="startRename('${ep.name}')" class="btn btn-gray" title="Hernoemen">✎</button>
-                                <button onclick="download('${ep.name}')" class="btn btn-blue" title="Exporteren">⬇</button>
-                                <button onclick="drop('${ep.name}')" class="btn btn-red" title="Verwijderen">🗑</button>
-                            </td>
-                        </tr>
-                    `).join('');
-                }
-
-                // Client Stats Table
-                const clList = document.getElementById('client-stats-list');
-                clList.innerHTML = data.clients_usage.map(c => `
-                    <tr>
-                        <td class="py-2 text-yellow-500 font-mono">${c.client_id}</td>
-                        <td class="py-2 text-right font-bold">${c.total_records}</td>
-                    </tr>
-                `).join('');
-
-            } catch(e) { console.error(e); }
+            renderSidebar();
+            renderEndpointsList();
         }
 
-        // --- ACTIONS ---
+        function renderSidebar() {
+            // 1. Detect Apps (X_Y structuur)
+            const apps = {};
+            globalData.endpoints.forEach(ep => {
+                if(ep.name.includes('_')) {
+                    const appName = ep.name.split('_')[0];
+                    apps[appName] = (apps[appName] || 0) + 1;
+                }
+            });
 
-        async function drop(name) {
-            if(!confirm(`WAARSCHUWING: Weet je zeker dat je '${name}' en AL zijn data wilt verwijderen?`)) return;
-            await fetch(`${API}/api/admin/collections/${name}`, { method: 'DELETE' });
+            const appsHtml = Object.keys(apps).map(app => `
+                <div class="nav-item ${isFilter('APP', app)}" onclick="applyFilter('APP', '${app}')">
+                    <span>${app}</span>
+                    <span class="tag">${apps[app]}</span>
+                </div>
+            `).join('');
+            document.getElementById('list-apps').innerHTML = appsHtml || '<div class="px-4 text-xs text-gray-600">Geen applicaties gedetecteerd</div>';
+
+            // 2. Users List
+            const usersHtml = globalData.clients_usage.map(u => `
+                <div class="nav-item ${isFilter('USER', u.client_id)}" onclick="applyFilter('USER', '${u.client_id}')">
+                    <span class="truncate w-32" title="${u.client_id}">${u.client_id}</span>
+                    <span class="tag">${u.total_records}</span>
+                </div>
+            `).join('');
+            document.getElementById('list-users').innerHTML = usersHtml;
+        }
+
+        function renderEndpointsList() {
+            const container = document.getElementById('endpoints-container');
+            let filtered = [];
+            let title = "Alle Endpoints";
+
+            // Filtering Logic
+            if (currentFilter.type === 'ALL') {
+                filtered = globalData.endpoints;
+            } else if (currentFilter.type === 'APP') {
+                filtered = globalData.endpoints.filter(ep => ep.name.startsWith(currentFilter.value + '_'));
+                title = `App: ${currentFilter.value}`;
+            } else if (currentFilter.type === 'USER') {
+                // Filter endpoints waar deze user in de 'owners' lijst staat
+                filtered = globalData.endpoints.filter(ep => ep.owners && ep.owners.includes(currentFilter.value));
+                title = `User: ${currentFilter.value}`;
+            }
+
+            document.getElementById('list-title').innerText = title;
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="p-8 text-center text-gray-500 text-sm">Geen endpoints gevonden voor dit filter.</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(ep => `
+                <div class="ep-item ${selectedEndpoint === ep.name ? 'active' : ''}" onclick="selectEndpoint('${ep.name}')">
+                    <div class="font-mono text-blue-300 text-sm mb-1">${ep.name}</div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs text-gray-500">${ep.count} records</span>
+                        <span class="text-xs text-gray-600">${ep.owners ? ep.owners.length : 0} users</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function selectEndpoint(name) {
+            selectedEndpoint = name;
+            renderEndpointsList(); // Update active state styling
+            
+            // UI Toggle
+            document.getElementById('detail-placeholder').classList.add('hidden');
+            document.getElementById('detail-content').classList.remove('hidden');
+
+            // Set Basic Info
+            const epData = globalData.endpoints.find(e => e.name === name);
+            document.getElementById('det-name').innerText = name;
+            document.getElementById('det-slug').innerText = name;
+            document.getElementById('det-count').innerText = epData.count;
+
+            // Render Users Badge
+            const usersHtml = (epData.owners || []).map(o => `<span class="tag text-xs border border-gray-700">${o}</span>`).join('');
+            document.getElementById('det-users').innerHTML = usersHtml || '<span class="text-xs text-gray-600">Geen data</span>';
+
+            // Fetch Preview Data
+            document.getElementById('det-preview').innerText = "Loading data...";
+            const res = await fetch(`${API}/api/admin/peek/${name}`);
+            const json = await res.json();
+            document.getElementById('det-preview').innerText = JSON.stringify(json, null, 2);
+        }
+
+        // --- HELPER ACTIONS ---
+
+        function applyFilter(type, value) {
+            currentFilter = { type, value };
+            
+            // Update UI Active States
+            document.getElementById('filter-all').classList.remove('active');
+            renderSidebar(); // Re-render sidebar to apply active class logic
+            renderEndpointsList();
+        }
+
+        function isFilter(type, value) {
+            return (currentFilter.type === type && currentFilter.value === value) ? 'active' : '';
+        }
+
+        async function dropEndpoint() {
+            if(!confirm(`Delete ${selectedEndpoint} and all data?`)) return;
+            await fetch(`${API}/api/admin/collections/${selectedEndpoint}`, { method: 'DELETE' });
+            selectedEndpoint = null;
+            document.getElementById('detail-content').classList.add('hidden');
+            document.getElementById('detail-placeholder').classList.remove('hidden');
             refresh();
         }
 
-        async function download(name) {
-            window.location.href = `${API}/api/admin/export/${name}`;
+        function downloadEndpoint() {
+            window.location.href = `${API}/api/admin/export/${selectedEndpoint}`;
         }
 
-        function startRename(oldName) {
-            document.getElementById('rename-old').value = oldName;
-            document.getElementById('rename-new').value = oldName;
-            document.getElementById('modal-rename').classList.remove('hidden');
-        }
-
-        async function doRename() {
-            const oldName = document.getElementById('rename-old').value;
-            const newName = document.getElementById('rename-new').value;
-            
-            const res = await fetch(`${API}/api/admin/rename`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ old_name: oldName, new_name: newName })
-            });
-            
-            if(res.ok) {
-                document.getElementById('modal-rename').classList.add('hidden');
-                refresh();
-            } else {
-                alert("Fout bij hernoemen (bestaat de nieuwe naam al?)");
+        async function renameEndpoint() {
+            const newName = prompt("Nieuwe naam:", selectedEndpoint);
+            if(newName && newName !== selectedEndpoint) {
+                const res = await fetch(`${API}/api/admin/rename`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ old_name: selectedEndpoint, new_name: newName })
+                });
+                if(res.ok) {
+                    selectedEndpoint = newName;
+                    refresh();
+                    selectEndpoint(newName);
+                } else {
+                    alert("Error renaming");
+                }
             }
         }
 
-        async function peek(name) {
-            const res = await fetch(`${API}/api/admin/peek/${name}`);
-            const json = await res.json();
-            document.getElementById('peek-name').innerText = name;
-            document.getElementById('peek-content').innerText = JSON.stringify(json, null, 2);
-            document.getElementById('peek-panel').classList.remove('hidden');
-        }
-
-        // Init
+        // Start
         refresh();
+
     </script>
 </body>
 </html>
