@@ -16,7 +16,6 @@ MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 def get_db():
     try:
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
-        # Check verbinding
         client.admin.command('ping')
         return client['data_store']
     except Exception as e:
@@ -26,27 +25,22 @@ def get_db():
 # --- SYSTEM HELPERS ---
 
 def get_config(db, col_name):
-    """Haalt instellingen op voor een collectie (Lock, TTL)."""
     return db['_g2_config'].find_one({'_id': col_name}) or {}
 
 def log_activity(db, col_name, client_id, is_error=False, error_msg=None):
-    """Logt activiteit."""
     try:
         now = datetime.datetime.utcnow()
-        # 1. Update Endpoint Activity
         db['_g2_config'].update_one(
             {'_id': col_name}, 
             {'$set': {'last_activity': now}}, 
             upsert=True
         )
-        # 2. Update Client Activity
         if client_id:
             db['_g2_config'].update_one(
                 {'_id': f"client_{client_id}"},
                 {'$set': {'type': 'client_stats', 'last_seen': now, 'client_id': client_id}},
                 upsert=True
             )
-        # 3. Log Error
         if is_error:
             db['_g2_errors'].insert_one({
                 'timestamp': now,
@@ -55,10 +49,9 @@ def log_activity(db, col_name, client_id, is_error=False, error_msg=None):
                 'error': str(error_msg)
             })
     except:
-        pass # Voorkom dat logging de app crasht
+        pass
 
 def check_lock(f):
-    """Endpoint Lock Middleware."""
     @wraps(f)
     def decorated_function(collection_name, *args, **kwargs):
         if request.method in ['POST', 'PUT', 'DELETE']:
@@ -90,8 +83,10 @@ def format_doc(doc):
             if k == '_id': new_doc['_id'] = str(v)
             elif k == '_meta':
                 new_doc['_client_id'] = v.get('owner')
-                if v.get('created_at'): new_doc['_created_at'] = v.get('created_at').isoformat()
-                if v.get('updated_at'): new_doc['_updated_at'] = v.get('updated_at').isoformat()
+                if v.get('created_at'): 
+                    new_doc['_created_at'] = v.get('created_at').strftime('%Y-%m-%d %H:%M:%S')
+                if v.get('updated_at'): 
+                    new_doc['_updated_at'] = v.get('updated_at').strftime('%Y-%m-%d %H:%M:%S')
             else: new_doc[k] = v
         return new_doc
     return doc
@@ -105,7 +100,6 @@ def clean_incoming_data(data):
 @app.route('/api/admin/stats', methods=['GET'])
 def admin_stats():
     db = get_db()
-    # FIX: db is None check
     if db is None: return jsonify({'error': 'DB Offline'}), 500
 
     cols = db.list_collection_names()
@@ -198,13 +192,9 @@ def admin_search():
                 {"_meta.owner": {"$regex": term, "$options": "i"}}
             ]}
         except:
-            # Simpele fallback search (voor demo doeleinden)
-            # Voor productie zou je text indexes gebruiken
             pass 
 
-    # Als query leeg is of faalt, probeer op ID te zoeken als het erop lijkt, anders alles
     if not query and term:
-         # Laatste poging: is het een ID?
          try: query = {"_id": ObjectId(term)}
          except: pass
 
@@ -264,56 +254,50 @@ def admin_cleanup():
         days = conf['ttl_days']
         col_name = conf['_id']
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
-        
-        # Verwijder op basis van created_at in _meta
         res = db[col_name].delete_many({'_meta.created_at': {'$lt': cutoff}})
         if res.deleted_count > 0:
             report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
             
     return jsonify({"report": report})
 
-@app.route('/api/admin/snapshot', methods=['POST'])
-def admin_snapshot():
-    db = get_db()
-    if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
-    data = request.json
-    col = data.get('collection')
-    snap_name = f"{col}_snap_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    pipeline = [{"$match": {}}, {"$out": snap_name}]
-    db[col].aggregate(pipeline)
-    
-    db['_g2_snapshots'].insert_one({
-        'original': col,
-        'snapshot_name': snap_name,
-        'created_at': datetime.datetime.utcnow()
-    })
-    return jsonify({"status": "created", "snapshot": snap_name})
-
 @app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT'])
 def admin_update_record(col_name, doc_id):
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
     try:
         new_doc = request.json
-        
         meta = {
             'owner': new_doc.get('_client_id'),
-            'created_at': datetime.datetime.fromisoformat(new_doc.get('_created_at')) if new_doc.get('_created_at') else None,
+            'created_at': datetime.datetime.strptime(new_doc.get('_created_at'), '%Y-%m-%d %H:%M:%S') if new_doc.get('_created_at') else None,
             'updated_at': datetime.datetime.utcnow()
         }
-        
         data = clean_incoming_data(new_doc)
         data['_meta'] = meta
-        
         db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
         return jsonify({"status": "saved"})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# Legacy Admin Routes (FIXED checks)
+# --- STATIC FILES SUPPORT (Config + CSS) ---
+@app.route('/tailwind_config.js')
+def serve_tailwind_config():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'tailwind_config.js')
+
+@app.route('/app_styles.css')
+def serve_app_styles():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'app_styles.css')
+
+@app.route('/dashboard.html')
+@app.route('/')
+def dashboard_html():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists(os.path.join(root_dir, 'dashboard.html')):
+        return send_from_directory(root_dir, 'dashboard.html')
+    return "Dashboard HTML niet gevonden."
+
+# Admin Routes (Legacy wrappers)
 @app.route('/api/admin/rename', methods=['POST'])
 def admin_rename():
     db = get_db()
@@ -349,15 +333,12 @@ def admin_peek(name):
 @check_lock
 def api_collection(collection_name):
     db = get_db()
-    # FIX: db is None check
     if db is None: return jsonify({"error": "DB Offline"}), 503
-    
     try:
         if request.method == 'GET':
             log_activity(db, collection_name, g.client_id)
             docs = list(db[collection_name].find({'_meta.owner': g.client_id}))
             return jsonify(format_doc(docs)), 200
-
         if request.method == 'POST':
             log_activity(db, collection_name, g.client_id)
             raw_data = request.get_json(silent=True) or {}
@@ -365,7 +346,6 @@ def api_collection(collection_name):
             user_data['_meta'] = {'owner': g.client_id, 'created_at': datetime.datetime.utcnow()}
             result = db[collection_name].insert_one(user_data)
             return jsonify({"_id": str(result.inserted_id), "status": "created"}), 201
-            
     except Exception as e:
         log_activity(db, collection_name, g.client_id, is_error=True, error_msg=e)
         return jsonify({"error": "Server Error"}), 500
@@ -375,42 +355,28 @@ def api_collection(collection_name):
 @check_lock
 def api_document(collection_name, doc_id):
     db = get_db()
-    # FIX: db is None check
     if db is None: return jsonify({"error": "DB Offline"}), 503
-    
     try:
         try: q_id = ObjectId(doc_id)
         except: q_id = doc_id
         query = {'_id': q_id, '_meta.owner': g.client_id}
         col = db[collection_name]
-
         if request.method == 'GET':
             log_activity(db, collection_name, g.client_id)
             doc = col.find_one(query)
             return (jsonify(format_doc(doc)), 200) if doc else (jsonify({"error": "Not found"}), 404)
-
         if request.method == 'PUT':
             log_activity(db, collection_name, g.client_id)
             user_data = clean_incoming_data(request.get_json(silent=True) or {})
             res = col.update_one(query, {'$set': user_data, '$set': {'_meta.updated_at': datetime.datetime.utcnow()}})
             return jsonify({"status": "updated" if res.matched_count else "not found"}), 200
-
         if request.method == 'DELETE':
             log_activity(db, collection_name, g.client_id)
             res = col.delete_one(query)
             return jsonify({"status": "deleted" if res.deleted_count else "not found"}), 200
-
     except Exception as e:
         log_activity(db, collection_name, g.client_id, is_error=True, error_msg=e)
         return jsonify({"error": "Server Error"}), 500
-
-@app.route('/dashboard.html')
-@app.route('/')
-def dashboard_html():
-    root_dir = os.path.dirname(os.path.abspath(__file__))
-    if os.path.exists(os.path.join(root_dir, 'dashboard.html')):
-        return send_from_directory(root_dir, 'dashboard.html')
-    return "Dashboard HTML niet gevonden."
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
