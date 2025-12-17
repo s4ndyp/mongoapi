@@ -6,7 +6,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; overflow: hidden; }
-        .main-layout { display: grid; grid-template-columns: 260px 1fr 450px; height: 100vh; }
+        
+        /* AANGEPASTE GRID LAYOUT */
+        /* Links: 250px | Midden: 500px (2x Links) | Rechts: Rest van de ruimte (1fr) */
+        .main-layout { display: grid; grid-template-columns: 250px 500px 1fr; height: 100vh; }
+        
         .col-sidebar { background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; }
         .col-list { background: #0d1117; border-right: 1px solid #30363d; overflow-y: auto; display: flex; flex-direction: column; }
         .col-detail { background: #0d1117; overflow-y: auto; display: flex; flex-direction: column; }
@@ -21,26 +25,25 @@
         .ep-item:hover { background: #161b22; }
         .ep-item.active { background: #1f242c; border-left: 3px solid #1f6feb; }
         
-        /* (6, 20) Traffic Light & (8) Heatmap */
-        .status-dot { width: 8px; height: 8px; borderRadius: 50%; display: inline-block; margin-right: 6px; }
+        /* Status Indicators */
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         .status-green { background: #238636; box-shadow: 0 0 5px #238636; }
         .status-orange { background: #d29922; }
         .status-red { background: #da3633; }
         .size-bar { height: 2px; background: #30363d; margin-top: 6px; width: 100%; border-radius: 2px; overflow: hidden; }
         .size-fill { height: 100%; background: #1f6feb; }
 
-        /* Tags & Badges */
+        /* Tags & Buttons */
         .tag { font-size: 0.7rem; padding: 1px 5px; border-radius: 4px; background: #30363d; color: #8b949e; }
         .tag-lock { background: #da3633; color: white; }
         
-        /* Buttons */
-        .btn { padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; cursor: pointer; transition: 0.2s; }
+        .btn { padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; cursor: pointer; transition: 0.2s; display: inline-flex; items-center; gap: 4px; }
         .btn-blue { background: #1f6feb; color: white; } .btn-blue:hover { background: #388bfd; }
         .btn-red { background: #da3633; color: white; } .btn-red:hover { background: #f85149; }
-        .btn-gray { background: #21262d; border: 1px solid #30363d; } .btn-gray:hover { border-color: #8b949e; }
+        .btn-gray { background: #21262d; border: 1px solid #30363d; } .btn-gray:hover { border-color: #8b949e; background: #30363d; }
         
-        /* (1) Editor */
-        textarea.editor { background: #0d1117; color: #79c0ff; font-family: monospace; width: 100%; border: 1px solid #30363d; padding: 10px; font-size: 12px; outline: none; resize: vertical; min-height: 200px; }
+        /* Editor */
+        textarea.editor { background: #0d1117; color: #79c0ff; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; width: 100%; border: 1px solid #30363d; padding: 12px; font-size: 13px; outline: none; resize: vertical; min-height: 400px; line-height: 1.5; }
         textarea.editor:focus { border-color: #1f6feb; }
     </style>
 </head>
@@ -53,7 +56,7 @@
                 <h1 class="font-bold text-white text-lg">G2 Admin</h1>
                 <div class="flex justify-between text-xs text-gray-500 mt-1">
                     <span id="stat-db-size">- MB</span>
-                    <button onclick="runCleanup()" class="text-blue-400 hover:text-white" title="(11) Run TTL Cleanup">🧹 Clean</button>
+                    <button onclick="runCleanup()" class="text-blue-400 hover:text-white" title="Run TTL Cleanup">🧹 Clean</button>
                 </div>
             </div>
             
@@ -70,12 +73,12 @@
             </div>
 
             <div class="py-2">
-                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2">Clients (9)</div>
+                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2">Clients</div>
                 <div id="list-users"></div>
             </div>
             
             <div class="py-2 mt-auto border-t border-[#30363d]">
-                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2 mt-2">Error Log (10)</div>
+                <div class="px-4 text-[10px] font-bold text-gray-500 uppercase mb-2 mt-2">Error Log</div>
                 <div id="list-errors" class="px-4 text-xs space-y-2 text-red-400"></div>
             </div>
         </div>
@@ -90,84 +93,90 @@
 
         <div class="col-detail">
             <div id="detail-placeholder" class="m-auto text-gray-600 text-center">
-                <div class="text-4xl mb-2">←</div>Selecteer endpoint
+                <div class="text-4xl mb-2">←</div>Selecteer een endpoint
             </div>
 
             <div id="detail-content" class="hidden flex flex-col h-full">
-                <div class="p-6 border-b border-[#30363d]">
-                    <div class="flex justify-between items-start">
+                <div class="p-6 border-b border-[#30363d] bg-[#161b22]">
+                    <div class="flex justify-between items-start mb-4">
                         <div>
-                            <h2 id="det-name" class="text-xl font-bold text-white">...</h2>
-                            <div class="flex gap-2 mt-1">
-                                <span id="det-lock-badge" class="tag tag-lock hidden">LOCKED (12)</span>
-                                <span id="det-ttl-badge" class="tag hidden">TTL: <span id="det-ttl-val"></span>d (11)</span>
+                            <div class="flex items-center gap-3">
+                                <h2 id="det-name" class="text-2xl font-bold text-white">...</h2>
+                                <button onclick="renameEndpoint()" class="text-gray-500 hover:text-white" title="Hernoem Endpoint">✎</button>
+                            </div>
+                            
+                            <div class="flex gap-2 mt-2">
+                                <span id="det-lock-badge" class="tag tag-lock hidden">LOCKED</span>
+                                <span id="det-ttl-badge" class="tag hidden">TTL: <span id="det-ttl-val"></span>d</span>
                             </div>
                         </div>
                         <div class="text-right">
-                            <div id="det-count" class="text-2xl font-bold text-white">-</div>
+                            <div id="det-count" class="text-3xl font-bold text-white">-</div>
                             <div class="text-xs text-gray-500">records</div>
                         </div>
                     </div>
+
+                    <div class="flex gap-2">
+                        <button onclick="downloadEndpoint()" class="btn btn-gray">⬇ Exporteren</button>
+                        <button onclick="doClone()" class="btn btn-gray">content_copy Dupliceren</button>
+                        <button onclick="doSnapshot()" class="btn btn-gray">📷 Snapshot</button>
+                        <div class="flex-grow"></div>
+                        <button onclick="dropEndpoint()" class="btn btn-red">🗑 Verwijderen</button>
+                    </div>
                 </div>
 
-                <div class="flex border-b border-[#30363d] px-6 gap-4 text-sm font-bold text-gray-500">
-                    <button class="py-3 border-b-2 border-[#1f6feb] text-white tab-btn" onclick="switchTab('data')">Data & (3) Search</button>
-                    <button class="py-3 border-b-2 border-transparent hover:text-gray-300 tab-btn" onclick="switchTab('settings')">Settings</button>
-                    <button class="py-3 border-b-2 border-transparent hover:text-gray-300 tab-btn" onclick="switchTab('tools')">Tools</button>
+                <div class="flex border-b border-[#30363d] px-6 gap-6 text-sm font-bold text-gray-500 bg-[#0d1117]">
+                    <button class="py-4 border-b-2 border-[#1f6feb] text-white tab-btn" onclick="switchTab('data')">Data & Editor</button>
+                    <button class="py-4 border-b-2 border-transparent hover:text-gray-300 tab-btn" onclick="switchTab('settings')">Instellingen</button>
                 </div>
 
                 <div id="tab-data" class="p-6 space-y-4 flex-grow overflow-auto">
                     
                     <div class="flex gap-2">
-                        <input type="text" id="search-term" placeholder="Zoek op ID of tekst..." class="bg-[#161b22] border border-[#30363d] rounded p-2 text-sm text-white flex-grow">
-                        <button onclick="doSearch()" class="btn btn-blue">Zoek</button>
+                        <input type="text" id="search-term" placeholder="Zoek op ID of tekst (Deep Search)..." class="bg-[#161b22] border border-[#30363d] rounded p-2 text-sm text-white flex-grow focus:border-blue-500 outline-none">
+                        <button onclick="doSearch()" class="btn btn-blue">Zoeken</button>
                     </div>
 
-                    <div id="editor-area">
-                        <div class="flex justify-between items-center mb-2">
-                            <h3 class="text-xs font-bold text-gray-400 uppercase">Geselecteerd Record (1)</h3>
-                            <div>
-                                <button onclick="saveRecord()" class="btn btn-blue text-xs hidden" id="btn-save">Opslaan</button>
-                                <button onclick="bulkDelete()" class="btn btn-red text-xs hidden" id="btn-bulk">Delete Selected (4)</button>
+                    <div id="editor-area" class="flex gap-6 h-full pb-10">
+                        <div class="w-1/3 flex flex-col gap-2 overflow-y-auto h-full pr-2" id="search-results">
+                            <div class="text-xs text-gray-500 text-center mt-4">Voer een zoekopdracht uit of klik op 'Zoeken' om de laatste 50 items te laden.</div>
+                        </div>
+
+                        <div class="w-2/3 flex flex-col gap-2 h-full">
+                            <div class="flex justify-between items-center h-8">
+                                <h3 class="text-xs font-bold text-gray-400 uppercase">Editor</h3>
+                                <div id="editor-actions" class="hidden">
+                                    <button onclick="saveRecord()" class="btn btn-blue text-xs">Opslaan (PUT)</button>
+                                </div>
+                            </div>
+                            <textarea id="json-editor" class="editor rounded hidden"></textarea>
+                            <div id="editor-placeholder" class="text-center text-gray-600 mt-20 text-sm border border-dashed border-[#30363d] p-10 rounded">
+                                Selecteer een record links om te bewerken
                             </div>
                         </div>
-                        <textarea id="json-editor" class="editor rounded hidden"></textarea>
-                        
-                        <div id="search-results" class="space-y-1"></div>
                     </div>
                 </div>
 
-                <div id="tab-settings" class="p-6 space-y-6 hidden">
-                    <div>
-                        <h3 class="font-bold text-white mb-2">(12) Endpoint Lock</h3>
-                        <p class="text-xs text-gray-500 mb-2">Blokkeer alle schrijfacties (POST, PUT, DELETE).</p>
-                        <label class="flex items-center gap-2 text-white">
-                            <input type="checkbox" id="set-locked"> Read-Only Mode
+                <div id="tab-settings" class="p-6 space-y-6 hidden max-w-2xl">
+                    <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
+                        <h3 class="font-bold text-white mb-2">Endpoint Lock</h3>
+                        <p class="text-xs text-gray-500 mb-4">Indien ingeschakeld, kunnen clients alleen lezen (GET). Schrijven (POST/PUT/DELETE) wordt geblokkeerd.</p>
+                        <label class="flex items-center gap-2 text-white cursor-pointer select-none">
+                            <input type="checkbox" id="set-locked" class="w-4 h-4"> 
+                            <span class="font-bold text-red-400">Read-Only Mode activeren</span>
                         </label>
                     </div>
-                    <div>
-                        <h3 class="font-bold text-white mb-2">(11) Time To Live (TTL)</h3>
-                        <p class="text-xs text-gray-500 mb-2">Verwijder automatisch records ouder dan X dagen.</p>
-                        <input type="number" id="set-ttl" class="bg-[#161b22] border border-[#30363d] rounded p-2 text-white w-24" placeholder="0 = Uit">
-                        <span class="text-sm text-gray-500 ml-2">dagen</span>
-                    </div>
-                    <button onclick="saveSettings()" class="btn btn-blue w-full">Instellingen Opslaan</button>
-                </div>
 
-                <div id="tab-tools" class="p-6 space-y-6 hidden">
                     <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
-                        <h3 class="font-bold text-white mb-2">(5) Clone Endpoint</h3>
-                        <input type="text" id="clone-dest" placeholder="Nieuwe naam..." class="w-full bg-black border border-[#30363d] rounded p-2 text-sm text-white mb-2">
-                        <button onclick="doClone()" class="btn btn-gray w-full">Dupliceren</button>
+                        <h3 class="font-bold text-white mb-2">Time To Live (TTL)</h3>
+                        <p class="text-xs text-gray-500 mb-4">Verwijder automatisch records die ouder zijn dan het ingestelde aantal dagen.</p>
+                        <div class="flex items-center gap-2">
+                            <input type="number" id="set-ttl" class="bg-[#0d1117] border border-[#30363d] rounded p-2 text-white w-24 focus:border-blue-500 outline-none" placeholder="0">
+                            <span class="text-sm text-gray-500">dagen (0 = Nooit verwijderen)</span>
+                        </div>
                     </div>
-                    <div class="p-4 border border-[#30363d] rounded bg-[#161b22]">
-                        <h3 class="font-bold text-white mb-2">(14) Snapshot</h3>
-                        <p class="text-xs text-gray-500 mb-2">Maak een backup in _g2_snapshots.</p>
-                        <button onclick="doSnapshot()" class="btn btn-gray w-full">Maak Snapshot</button>
-                    </div>
-                    <div class="mt-8 border-t border-[#30363d] pt-4">
-                        <button onclick="dropEndpoint()" class="btn btn-red w-full">⚠️ Verwijder Endpoint</button>
-                    </div>
+                    
+                    <button onclick="saveSettings()" class="btn btn-blue w-full py-2">Instellingen Opslaan</button>
                 </div>
             </div>
         </div>
@@ -179,7 +188,7 @@
         let currentEp = null;
         let currentRecordId = null;
 
-        // --- INIT & REFRESH ---
+        // --- CORE ---
         async function refresh() {
             const res = await fetch(`${API}/api/admin/stats`);
             globalData = await res.json();
@@ -189,20 +198,13 @@
             
             renderSidebar();
             renderList();
-            
-            // (10) Error Log Render
-            const errDiv = document.getElementById('list-errors');
-            errDiv.innerHTML = globalData.errors.length ? globalData.errors.map(e => `
-                <div class="truncate" title="${e.msg}">
-                    <span class="text-gray-500">[${e.time.split('T')[1].split('.')[0]}]</span> ${e.msg}
-                </div>
-            `).join('') : '<span class="text-gray-600">Geen errors</span>';
+            renderErrorLog();
 
-            if(currentEp) loadDetail(currentEp); // Refresh detail if open
+            if(currentEp) loadDetail(currentEp);
         }
 
         function renderSidebar() {
-            // Apps Logic
+            // Apps
             const apps = {};
             globalData.endpoints.forEach(ep => {
                 if(ep.name.includes('_')) {
@@ -214,17 +216,16 @@
                 `<div class="nav-item" onclick="filterList('${a}_')">${a} <span class="tag">${apps[a]}</span></div>`
             ).join('');
 
-            // (9) Client Last Seen Logic
-            document.getElementById('list-users').innerHTML = globalData.clients.map(c => {
-                const seen = c.last_seen ? timeAgo(c.last_seen) : 'Nooit';
-                return `<div class="nav-item">
+            // Clients
+            document.getElementById('list-users').innerHTML = globalData.clients.map(c => `
+                <div class="nav-item">
                     <div class="flex flex-col">
                         <span>${c.client_id}</span>
-                        <span class="text-[9px] text-gray-500">${seen}</span>
+                        <span class="text-[9px] text-gray-500">${c.last_seen ? timeAgo(c.last_seen) : 'Nooit'}</span>
                     </div>
                     <span class="tag">${c.total_records}</span>
-                </div>`
-            }).join('');
+                </div>
+            `).join('');
         }
 
         function renderList(filterPrefix = '') {
@@ -232,10 +233,9 @@
             const filtered = globalData.endpoints.filter(ep => ep.name.startsWith(filterPrefix));
             
             list.innerHTML = filtered.map(ep => {
-                // (6, 20) Traffic Light Logic
                 let statusColor = 'status-red';
                 if(ep.last_activity) {
-                    const diff = (new Date() - new Date(ep.last_activity)) / 1000 / 60; // minuten
+                    const diff = (new Date() - new Date(ep.last_activity)) / 1000 / 60;
                     if(diff < 60) statusColor = 'status-green';
                     else if(diff < 60 * 24) statusColor = 'status-orange';
                 }
@@ -243,12 +243,12 @@
                 return `
                 <div class="ep-item ${currentEp === ep.name ? 'active' : ''}" onclick="selectEp('${ep.name}')">
                     <div class="flex justify-between items-center mb-1">
-                        <div class="font-mono text-sm text-blue-300 truncate w-32">${ep.name}</div>
-                        <div class="${statusColor} status-dot" title="Laatste activiteit: ${ep.last_activity || 'Nooit'}"></div>
+                        <div class="font-mono text-sm text-blue-300 truncate w-64" title="${ep.name}">${ep.name}</div>
+                        <div class="${statusColor} status-dot" title="Actief: ${ep.last_activity || 'Nooit'}"></div>
                     </div>
                     <div class="flex justify-between items-center text-xs text-gray-500">
-                        <span>${ep.count} recs</span>
-                        ${ep.locked ? '<span class="text-red-500">🔒</span>' : ''}
+                        <span>${ep.count} records</span>
+                        ${ep.locked ? '<span class="text-red-500 font-bold">🔒 LOCKED</span>' : ''}
                     </div>
                     <div class="size-bar"><div class="size-fill" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
@@ -261,9 +261,16 @@
 
         function selectEp(name) {
             currentEp = name;
-            renderList(); // update active class
+            renderList();
             document.getElementById('detail-placeholder').classList.add('hidden');
             document.getElementById('detail-content').classList.remove('hidden');
+            
+            // Reset editor state
+            document.getElementById('json-editor').classList.add('hidden');
+            document.getElementById('editor-placeholder').classList.remove('hidden');
+            document.getElementById('editor-actions').classList.add('hidden');
+            document.getElementById('search-results').innerHTML = '<div class="text-xs text-gray-500 text-center mt-4">Klik op zoeken...</div>';
+            
             loadDetail(name);
         }
 
@@ -272,21 +279,16 @@
             document.getElementById('det-name').innerText = name;
             document.getElementById('det-count').innerText = ep.count;
             
-            // Badges
             document.getElementById('det-lock-badge').classList.toggle('hidden', !ep.locked);
-            if(ep.ttl > 0) {
-                document.getElementById('det-ttl-badge').classList.remove('hidden');
-                document.getElementById('det-ttl-val').innerText = ep.ttl;
-            } else {
-                document.getElementById('det-ttl-badge').classList.add('hidden');
-            }
+            document.getElementById('det-ttl-badge').classList.toggle('hidden', !(ep.ttl > 0));
+            if(ep.ttl > 0) document.getElementById('det-ttl-val').innerText = ep.ttl;
 
-            // Populate Settings Inputs
             document.getElementById('set-locked').checked = ep.locked;
             document.getElementById('set-ttl').value = ep.ttl || '';
         }
 
-        // --- TAB: DATA / SEARCH (1, 3, 4) ---
+        // --- ACTIONS ---
+
         async function doSearch() {
             const term = document.getElementById('search-term').value;
             const res = await fetch(`${API}/api/admin/search`, {
@@ -295,62 +297,41 @@
             });
             const docs = await res.json();
             
-            // Render Search Results
             const container = document.getElementById('search-results');
             if(docs.length === 0) {
-                container.innerHTML = '<div class="text-center text-gray-500 mt-4">Geen resultaten</div>';
-                document.getElementById('btn-bulk').classList.add('hidden');
+                container.innerHTML = '<div class="text-center text-gray-500 mt-4 text-xs">Geen resultaten</div>';
             } else {
-                document.getElementById('btn-bulk').classList.remove('hidden');
                 container.innerHTML = docs.map(d => `
-                    <div class="p-2 border border-[#30363d] rounded bg-[#161b22] hover:bg-[#21262d] cursor-pointer flex justify-between" onclick="loadRecord('${d._id}')">
-                        <div class="truncate text-xs font-mono text-gray-400 w-3/4">${JSON.stringify(d).substring(0,60)}...</div>
-                        <input type="checkbox" class="bulk-check" value="${d._id}" onclick="event.stopPropagation()">
+                    <div class="p-3 border border-[#30363d] rounded bg-[#161b22] hover:bg-[#21262d] cursor-pointer" onclick="loadRecord('${d._id}')">
+                        <div class="text-[10px] text-blue-400 font-mono mb-1">${d._id}</div>
+                        <div class="text-xs text-gray-400 truncate font-mono">${JSON.stringify(cleanDisplay(d))}</div>
                     </div>
                 `).join('');
             }
         }
 
-        function loadRecord(id) {
-            // (1) Editor Load
-            const container = document.getElementById('search-results');
-            // Zoek data uit de DOM (beetje hacky maar snel) of fetch opnieuw. Fetch is veiliger.
-            // Voor nu halen we het record op via de API admin search (of we zouden een get-one admin route kunnen maken, maar search werkt ook op ID)
-            // Laten we de search resultaten gebruiken die we al hebben in memory? Nee, laten we aannemen dat we ze kunnen ophalen.
-            // Simpelheid: we hebben de data al in de 'docs' variabele van de doSearch scope? Nee.
-            // We doen een specifieke search op ID om de editor te vullen.
-            document.getElementById('search-term').value = id;
-            doSearch().then(() => {
-                // Nu pakken we het eerste resultaat
-                const el = document.getElementById('search-results').firstElementChild;
-                if(el) {
-                   // Hier zou eigenlijk de volledige data moeten zijn. 
-                   // Voor de demo vullen we de editor met een fetch naar de public API (via admin proxy eigenlijk beter)
-                   // We gebruiken de admin search response
-                   fetch(`${API}/api/${currentEp}/${id}`, { headers: {'x-client-id': 'ADMIN_OVERRIDE'} }) // Dit werkt alleen als admin override zou bestaan.
-                   // Correctie: we gebruiken admin search die geeft full docs terug.
-                   // Omdat doSearch de lijst rendert, moeten we de data ergens opslaan.
-                   // Laten we de editor gewoon vullen met de text uit de div? Nee.
-                   // We voegen een endpoint toe in app.py: admin_update_record, maar geen admin_get_record.
-                   // Workaround: We parsen de inhoud van de search results die we net hebben opgehaald.
-                   // OK, laten we doSearch iets slimmer maken.
-                }
-            });
-            
-            // Update editor visual
+        function cleanDisplay(d) {
+            // Helper om preview iets schoner te maken (zonder meta velden)
+            const c = {...d};
+            delete c._id; delete c._client_id; delete c._created_at; delete c._updated_at;
+            return c;
+        }
+
+        async function loadRecord(id) {
+            // Fetch fresh record
             currentRecordId = id;
-            const resDiv = document.getElementById('search-results');
-            // Fetch clean data via search again simply
-             fetch(`${API}/api/admin/search`, {
+            const res = await fetch(`${API}/api/admin/search`, {
                 method: 'POST', headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({ collection: currentEp, term: id })
-            }).then(r => r.json()).then(d => {
-                if(d[0]) {
-                    document.getElementById('json-editor').value = JSON.stringify(d[0], null, 2);
-                    document.getElementById('json-editor').classList.remove('hidden');
-                    document.getElementById('btn-save').classList.remove('hidden');
-                }
             });
+            const docs = await res.json();
+            
+            if(docs[0]) {
+                document.getElementById('json-editor').value = JSON.stringify(docs[0], null, 4);
+                document.getElementById('json-editor').classList.remove('hidden');
+                document.getElementById('editor-placeholder').classList.add('hidden');
+                document.getElementById('editor-actions').classList.remove('hidden');
+            }
         }
 
         async function saveRecord() {
@@ -360,27 +341,59 @@
                     method: 'PUT', headers: {'Content-Type':'application/json'},
                     body: JSON.stringify(data)
                 });
-                const json = await res.json();
-                if(res.ok) alert("Opgeslagen!");
-                else alert("Fout: " + json.error);
-            } catch(e) { alert("Invalid JSON"); }
+                if(res.ok) {
+                    alert("Opgeslagen!");
+                    doSearch(); // Refresh list to show changes
+                } else {
+                    const j = await res.json();
+                    alert("Fout: " + j.error);
+                }
+            } catch(e) { alert("Ongeldige JSON format"); }
         }
 
-        async function bulkDelete() {
-            const checks = document.querySelectorAll('.bulk-check:checked');
-            const ids = Array.from(checks).map(c => c.value);
-            if(ids.length === 0) return;
-            if(!confirm(`Verwijder ${ids.length} items?`)) return;
-            
-            await fetch(`${API}/api/admin/bulk_delete`, {
+        async function renameEndpoint() {
+            const newName = prompt("Nieuwe naam voor " + currentEp + ":", currentEp);
+            if(newName && newName !== currentEp) {
+                const res = await fetch(`${API}/api/admin/rename`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ old_name: currentEp, new_name: newName })
+                });
+                if(res.ok) {
+                    currentEp = newName;
+                    refresh();
+                    selectEp(newName);
+                } else alert("Fout bij hernoemen");
+            }
+        }
+
+        // --- STANDARD TOOLS ---
+        async function dropEndpoint() {
+            if(confirm(`Weet je zeker dat je ${currentEp} wilt verwijderen?`)) {
+                await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' });
+                window.location.reload();
+            }
+        }
+        function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
+        
+        async function doClone() {
+            const dest = prompt("Naam voor kopie:", currentEp + "_copy");
+            if(dest) {
+                await fetch(`${API}/api/admin/clone`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ source: currentEp, destination: dest })
+                });
+                refresh();
+            }
+        }
+        
+        async function doSnapshot() {
+            const res = await fetch(`${API}/api/admin/snapshot`, {
                 method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({ collection: currentEp, ids })
+                body: JSON.stringify({ collection: currentEp })
             });
-            doSearch(); // refresh list
-            refresh(); // refresh global stats
+            const d = await res.json();
+            alert("Snapshot gemaakt: " + d.snapshot);
         }
-
-        // --- TAB: SETTINGS & TOOLS ---
 
         async function saveSettings() {
             const locked = document.getElementById('set-locked').checked;
@@ -392,66 +405,38 @@
             refresh();
             alert("Instellingen opgeslagen");
         }
-
-        async function doClone() {
-            const dest = document.getElementById('clone-dest').value;
-            if(!dest) return;
-            await fetch(`${API}/api/admin/clone`, {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({ source: currentEp, destination: dest })
-            });
-            refresh();
-            alert("Gedupliceerd!");
-        }
-
-        async function doSnapshot() {
-            const res = await fetch(`${API}/api/admin/snapshot`, {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({ collection: currentEp })
-            });
-            const d = await res.json();
-            alert(`Snapshot gemaakt: ${d.snapshot}`);
-        }
-        
-        async function dropEndpoint() {
-            if(!confirm("Echt verwijderen?")) return;
-            await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' });
-            currentEp = null;
-            document.getElementById('detail-content').classList.add('hidden');
-            document.getElementById('detail-placeholder').classList.remove('hidden');
-            refresh();
-        }
         
         async function runCleanup() {
-             const res = await fetch(`${API}/api/admin/cleanup`, { method: 'POST' });
-             const d = await res.json();
-             alert(d.report.length ? d.report.join('\n') : "Niets om op te ruimen.");
-             refresh();
+            const res = await fetch(`${API}/api/admin/cleanup`, { method: 'POST' });
+            const d = await res.json();
+            alert(d.report.length ? d.report.join('\n') : "Alles is schoon.");
         }
 
-        // --- UTILS ---
+        function renderErrorLog() {
+            document.getElementById('list-errors').innerHTML = globalData.errors.length ? globalData.errors.map(e => 
+                `<div class="truncate" title="${e.msg}"><span class="text-gray-500">[${e.time.split('T')[1].substr(0,5)}]</span> ${e.msg}</div>`
+            ).join('') : '<span class="text-gray-600">Geen meldingen</span>';
+        }
+
         function switchTab(t) {
-            ['data','settings','tools'].forEach(x => {
-                document.getElementById(`tab-${x}`).classList.add('hidden');
-                event.target.parentNode.children[['data','settings','tools'].indexOf(x)].classList.remove('border-[#1f6feb]','text-white');
-                event.target.parentNode.children[['data','settings','tools'].indexOf(x)].classList.add('border-transparent');
-            });
+            ['data','settings'].forEach(x => document.getElementById(`tab-${x}`).classList.add('hidden'));
             document.getElementById(`tab-${t}`).classList.remove('hidden');
-            // Simple active styling toggle hack for demo simplicity
+            
+            // Visual tabs styling logic (simplified)
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.remove('border-[#1f6feb]', 'text-white');
+                b.classList.add('border-transparent');
+            });
             event.target.classList.remove('border-transparent');
-            event.target.classList.add('border-[#1f6feb]','text-white');
+            event.target.classList.add('border-[#1f6feb]', 'text-white');
         }
 
-        function timeAgo(dateString) {
-            const sec = Math.floor((new Date() - new Date(dateString)) / 1000);
-            if(sec < 60) return `${sec}s`;
-            if(sec < 3600) return `${Math.floor(sec/60)}m`;
-            if(sec < 86400) return `${Math.floor(sec/3600)}u`;
-            return `${Math.floor(sec/86400)}d`;
+        function timeAgo(d) {
+            const s = Math.floor((new Date() - new Date(d))/1000);
+            if(s<60) return s+"s"; if(s<3600) return Math.floor(s/60)+"m"; if(s<86400) return Math.floor(s/3600)+"u"; return Math.floor(s/86400)+"d";
         }
 
         refresh();
-        // Auto refresh pulse (elke minuut)
         setInterval(refresh, 60000);
 
     </script>
