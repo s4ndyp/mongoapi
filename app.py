@@ -1,964 +1,382 @@
-# app.py
 import os
 import datetime
 import json
-import secrets
-import string
-import re
+import traceback
 from functools import wraps
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session, make_response
-from flask_cors import CORS 
+from flask import Flask, request, jsonify, g, Response, send_from_directory
+from flask_cors import CORS
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 from bson import ObjectId
 
-# IMPORTS voor JWT en hashing
-import jwt 
-from bcrypt import hashpw, gensalt, checkpw
-import hashlib 
-
-# IMPORT Templates
-from templates import (
-    LOGIN_CONTENT, BASE_LAYOUT, DASHBOARD_CONTENT, 
-    ENDPOINTS_CONTENT, CLIENT_DETAIL_CONTENT, SETTINGS_CONTENT
-)
-
-# --- Globale Configuratie ---
-DEFAULT_MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
-MONGO_CLIENT = None
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# CORS aangepast
-CORS(app, supports_credentials=True) 
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 
-app.config['MONGO_URI'] = DEFAULT_MONGO_URI 
-app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-this')
-
-# CONFIGURATIE VOOR JWT
-app.config['JWT_SECRET'] = os.environ.get('JWT_SECRET', secrets.token_urlsafe(32))
-app.config['JWT_EXPIRY_MINUTES'] = 60 * 24 
-app.config['JWT_COOKIE_NAME'] = 'auth_token' 
-
-# --- Helper: Wachtwoord Hashing ---
-def hash_password(password):
-    return hashpw(password.encode('utf-8'), gensalt()).decode('utf-8')
-
-def check_password(password, hashed):
-    return checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
-# --- Helper: JWT Functies ---
-def encode_auth_token(user_id, expiry_minutes=None):
+def get_db():
     try:
-        minutes = expiry_minutes if expiry_minutes is not None else app.config['JWT_EXPIRY_MINUTES']
-        payload = {
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes),
-            'iat': datetime.datetime.utcnow(),
-            'sub': str(user_id)
-        }
-        return jwt.encode(payload, app.config.get('JWT_SECRET'), algorithm='HS256')
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
+        client.admin.command('ping')
+        return client['data_store']
     except Exception as e:
-        print(f"JWT Encoding Error: {e}")
+        print(f"DB ERROR: {e}")
         return None
 
-def decode_auth_token(auth_token):
+# --- SYSTEM HELPERS ---
+
+def get_config(db, col_name):
+    return db['_g2_config'].find_one({'_id': col_name}) or {}
+
+def log_activity(db, col_name, client_id, is_error=False, error_msg=None):
     try:
-        payload = jwt.decode(auth_token, app.config.get('JWT_SECRET'), algorithms=['HS256'])
-        return (True, payload['sub'])
-    except jwt.ExpiredSignatureError:
-        return (False, 'Token is verlopen.')
-    except jwt.InvalidTokenError:
-        return (False, 'Ongeldig token.')
-
-# --- Helper: Opslag Formatteren ---
-def format_size(size_bytes):
-    if size_bytes == 0: return "0 KB"
-    size_name = ("B", "KB", "MB", "GB", "TB")
-    i = int(0)
-    p = 1024
-    while size_bytes >= p and i < len(size_name) - 1:
-        size_bytes /= p
-        i += 1
-    return f"{size_bytes:.2f} {size_name[i]}"
-
-
-# --- Database Connectie & Indexen ---
-def ensure_indexes(db):
-    try:
-        db['statistics'].create_index([("timestamp", 1), ("source", 1)], background=True)
-        db['statistics'].create_index("timestamp", expireAfterSeconds=31536000, background=True) 
-        db['api_keys'].create_index("key", unique=True, background=True)
-        db['api_keys'].create_index("client_id", unique=True, background=True)
-        db['endpoints'].create_index("name", unique=True, background=True)
-        db['users'].create_index("username", unique=True, background=True)
-        db['tag_settings'].create_index("tag", unique=True, background=True)
-        
-        # Data indexen
-        db['data_items'].create_index([("projectId", 1), ("type", 1)], background=True)
-        db['data_projects'].create_index([("name", 1)], background=True)
-        db['data_items'].create_index("meta.client_id", background=True)
-        db['data_projects'].create_index("meta.client_id", background=True)
-        print("MongoDB Indexen gecontroleerd.")
-    except Exception as e:
-        print(f"Waarschuwing indexen: {e}")
-
-def get_db_connection(uri=None):
-    global MONGO_CLIENT
-    target_uri = uri if uri else app.config.get('MONGO_URI')
-
-    if not target_uri: return None, "URI missing"
-
-    if MONGO_CLIENT is None or uri is not None:
-        try:
-            client = MongoClient(target_uri, serverSelectionTimeoutMS=5000)
-            client.admin.command('ping')
-            if uri is None:
-                MONGO_CLIENT = client
-                ensure_indexes(MONGO_CLIENT['api_gateway_db'])
-            else:
-                return client, None
-            return MONGO_CLIENT, None
-        except Exception as e:
-            return None, str(e)
-            
-    try:
-        MONGO_CLIENT.admin.command('ping')
-        return MONGO_CLIENT, None
-    except Exception as e:
-        MONGO_CLIENT = None
-        return None, str(e)
-
-# --- Logging voor Statistieken ---
-def log_statistic(action, source_app, endpoint="default"):
-    client, _ = get_db_connection()
-    if client:
-        try:
-            db = client['api_gateway_db']
-            db['statistics'].insert_one({
-                'timestamp': datetime.datetime.utcnow(),
-                'action': action,
-                'source': source_app,
-                'endpoint': endpoint
-            })
-        except Exception as e:
-            print(f"Log error: {e}")
-
-# --- Tag Management Logic ---
-def get_tag_color_map():
-    client, _ = get_db_connection()
-    tag_map = {}
-    
-    # Defaults
-    tag_map['system'] = '#6c757d'
-    tag_map['legacy'] = '#6c757d'
-    tag_map['taskey'] = '#0d6efd'
-    
-    if client:
-        try:
-            settings = client['api_gateway_db']['tag_settings'].find({})
-            for s in settings:
-                tag_map[s['tag']] = s['color']
-        except Exception as e:
-            print(f"Error fetching tag colors: {e}")
-            
-    return tag_map
-
-def update_tag_settings(original_name, new_name, color):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    db = client['api_gateway_db']
-    try:
-        if original_name != new_name:
-            db['endpoints'].update_many(
-                {'tags': original_name},
-                {'$set': {'tags.$': new_name}}
-            )
-            db['tag_settings'].delete_one({'tag': original_name})
-            
-        db['tag_settings'].update_one(
-            {'tag': new_name},
-            {'$set': {'tag': new_name, 'color': color}},
+        now = datetime.datetime.utcnow()
+        db['_g2_config'].update_one(
+            {'_id': col_name}, 
+            {'$set': {'last_activity': now}}, 
             upsert=True
         )
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-# --- Endpoint Management Functies ---
-def get_configured_endpoints(tag_filter=None, sort_by='alpha'):
-    client, _ = get_db_connection()
-    endpoints = []
-    
-    # Systeem Endpoints 
-    endpoints.append({
-        'name': 'data',
-        'description': 'Standaard Endpoint (Legacy / app_data)',
-        'system': True,
-        'tags': ['system', 'legacy'],
-        'created_at': datetime.datetime.min
-    })
-    
-    endpoints.append({
-        'name': 'items',
-        'description': 'Taskey Items (Taken en Notities)',
-        'system': True,
-        'tags': ['system', 'taskey'],
-        'created_at': datetime.datetime.min
-    })
-    endpoints.append({
-        'name': 'projects',
-        'description': 'Taskey Projecten',
-        'system': True,
-        'tags': ['system', 'taskey'],
-        'created_at': datetime.datetime.min
-    })
-
-    if client:
-        try:
-            # Haal DB endpoints op
-            db_endpoints = list(client['api_gateway_db']['endpoints'].find({}, {'_id': 0}))
-            for ep in db_endpoints:
-                if ep.get('name') not in ['data', 'items', 'projects']: 
-                    ep['system'] = False
-                    ep['tags'] = ep.get('tags', [])
-                    endpoints.append(ep)
-        except Exception as e:
-            print(f"Fout bij ophalen endpoints: {e}")
-            
-    # Eerst filteren als dat nodig is
-    if tag_filter:
-        endpoints = [ep for ep in endpoints if tag_filter in ep.get('tags', [])]
-        
-    # Daarna sorteren op basis van de parameter
-    if sort_by == 'tag':
-        # Sorteer op de eerste tag. Als er geen tag is, gebruik 'zzzz' zodat hij onderaan komt.
-        # Secundaire sort is op naam.
-        endpoints.sort(key=lambda x: (x['tags'][0].lower() if x['tags'] else 'zzzz', x['name'].lower()))
-    else:
-        # Default: Alfabetisch op naam
-        endpoints.sort(key=lambda x: x['name'].lower())
-        
-    return endpoints
-
-def get_all_unique_tags():
-    client, _ = get_db_connection()
-    tags = set(['system', 'taskey', 'legacy'])
-    if client:
-        try:
-            db_tags = client['api_gateway_db']['endpoints'].distinct("tags")
-            for t in db_tags: tags.add(t)
-        except Exception as e: print(f"Error fetching tags: {e}")
-    return sorted(list(tags))
-
-def get_db_collection_name(endpoint_name):
-    if endpoint_name == 'data': return 'app_data'
-    elif endpoint_name == 'items': return 'data_items'
-    elif endpoint_name == 'projects': return 'data_projects'
-    else: return f"data_{endpoint_name}"
-
-def get_endpoint_stats(endpoint_name):
-    client, _ = get_db_connection()
-    if not client: return {'count': 0, 'size': '0 KB'}
-    coll_name = get_db_collection_name(endpoint_name)
-    try:
-        stats = client['api_gateway_db'].command("collstats", coll_name)
-        return {'count': stats.get('count', 0), 'size': format_size(stats.get('storageSize', 0))}
+        if client_id:
+            db['_g2_config'].update_one(
+                {'_id': f"client_{client_id}"},
+                {'$set': {'type': 'client_stats', 'last_seen': now, 'client_id': client_id}},
+                upsert=True
+            )
+        if is_error:
+            db['_g2_errors'].insert_one({
+                'timestamp': now,
+                'endpoint': col_name,
+                'client_id': client_id,
+                'error': str(error_msg)
+            })
     except:
-        return {'count': 0, 'size': '0 KB'}
+        pass
 
-def process_tags_string(tags_str):
-    if not tags_str: return []
-    return [t.strip().lower() for t in tags_str.split(',') if t.strip()]
-
-def create_endpoint(name, description, tags_str):
-    if not re.match("^[a-zA-Z0-9_]+$", name):
-        return False, "Naam mag alleen letters, cijfers en underscores bevatten."
-    if name in ['data', 'items', 'projects']:
-        return False, f"De naam '{name}' is gereserveerd voor het systeem."
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    
-    tags = process_tags_string(tags_str)
-    
-    try:
-        client['api_gateway_db']['endpoints'].insert_one({
-            'name': name, 
-            'description': description, 
-            'tags': tags,
-            'created_at': datetime.datetime.utcnow()
-        })
-        client['api_gateway_db'].create_collection(get_db_collection_name(name))
-        return True, None
-    except Exception as e: return False, str(e)
-
-def update_endpoint_metadata(name, description, tags_str):
-    """Update de beschrijving en tags."""
-    if name in ['data', 'items', 'projects']:
-        return False, "Systeem endpoints kunnen niet worden gewijzigd."
-        
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    
-    tags = process_tags_string(tags_str)
-    
-    try:
-        result = client['api_gateway_db']['endpoints'].update_one(
-            {'name': name},
-            {'$set': {
-                'description': description, 
-                'tags': tags
-            }}
-        )
-        if result.matched_count == 0:
-            return False, "Endpoint niet gevonden."
-        return True, None
-    except Exception as e: return False, str(e)
-
-def delete_endpoint(name):
-    if name in ['data', 'items', 'projects']: return False
-    client, _ = get_db_connection()
-    if not client: return False
-    try:
-        client['api_gateway_db']['endpoints'].delete_one({'name': name})
-        client['api_gateway_db'][get_db_collection_name(name)].drop()
-        return True
-    except: return False
-
-def clear_endpoint_data(name):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    try:
-        coll_name = get_db_collection_name(name)
-        result = client['api_gateway_db'][coll_name].delete_many({})
-        return True, result.deleted_count
-    except Exception as e:
-        return False, str(e)
-
-# --- API Key Management ---
-def load_api_keys():
-    client, _ = get_db_connection()
-    if not client: return {}
-    keys = {}
-    for doc in client['api_gateway_db']['api_keys'].find({}):
-        keys[doc['client_id']] = {'key': doc['key'], 'description': doc['description']}
-    return keys
-
-def save_new_api_key(client_id, key, description): 
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    try:
-        client['api_gateway_db']['api_keys'].insert_one({
-            'client_id': client_id, 'key': key, 'description': description, 
-            'created_at': datetime.datetime.utcnow()
-        })
-        return True, None
-    except Exception as e: return False, str(e)
-
-def revoke_api_key_db(client_id):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    client['api_gateway_db']['api_keys'].delete_one({'client_id': client_id})
-    return True, None
-
-# --- USER MANAGEMENT FUNCTIES ---
-def load_all_users():
-    client, _ = get_db_connection()
-    if not client: return []
-    try:
-        users = list(client['api_gateway_db']['users'].find({}, {'username': 1, 'created_at': 1, 'token_validity_minutes': 1}))
-        return [{'username': u['username'], 'created_at': u['created_at'], 'validity': u.get('token_validity_minutes', 1440)} for u in users]
-    except Exception as e:
-        print(f"Error loading users: {e}")
-        return []
-
-def delete_user_db(username):
-    client, _ = get_db_connection()
-    if not client: return False, "No DB"
-    try:
-        client['api_gateway_db']['users'].delete_one({'username': username})
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-# --- AUTHENTICATIE ROUTE (JWT Login) ---
-@app.route('/api/auth/login', methods=['POST'])
-def login_api():
-    client, _ = get_db_connection()
-    data = request.json
-    if not data or 'username' not in data or 'password' not in data:
-        log_statistic("login_failed_invalid_input", get_remote_address(), "auth")
-        return jsonify({"error": "Ongeldige input: gebruikersnaam en wachtwoord vereist."}), 400
-        
-    username = data['username']
-    password = data['password']
-    
-    if not client: 
-        log_statistic("login_failed_db_error", get_remote_address(), "auth")
-        return jsonify({"error": "DB failure"}), 503
-    
-    db = client['api_gateway_db']
-    user = db['users'].find_one({'username': username})
-    
-    if user and check_password(password, user['password_hash']):
-        user_expiry = user.get('token_validity_minutes', app.config['JWT_EXPIRY_MINUTES'])
-        token = encode_auth_token(user['_id'], user_expiry)
-        log_statistic("login_success", username, "auth")
-        
-        response = make_response(jsonify({
-            "status": "success", 
-            "token": token,
-            "expires_in_minutes": user_expiry,
-            "message": "Token gegenereerd. Ook opgeslagen als HttpOnly cookie."
-        }))
-        response.set_cookie(app.config['JWT_COOKIE_NAME'], token, httponly=True, secure=False, samesite='Lax', max_age=user_expiry * 60)
-        return response, 200
-    else:
-        log_statistic("login_failed", get_remote_address(), "auth")
-        return jsonify({"error": "Ongeldige gebruikersnaam of wachtwoord."}), 401
-
-@app.route('/api/auth/logout', methods=['POST'])
-def logout_api():
-    response = make_response(jsonify({"status": "success", "message": "Uitgelogd (Cookie gewist)."}))
-    response.set_cookie(app.config['JWT_COOKIE_NAME'], '', expires=0, httponly=True)
-    return response, 200
-        
-# --- Rate Limiter & Auth ---
-def get_client_id():
-    auth_header = request.headers.get('Authorization')
-    token = None
-    if auth_header and auth_header.startswith('Bearer '):
-        token = auth_header.split(' ')[1]
-    if not token:
-        token = request.cookies.get(app.config['JWT_COOKIE_NAME'])
-
-    if token:
-        client, _ = get_db_connection()
-        if client:
-            success, user_id_or_error = decode_auth_token(token)
-            if success:
-                db = client['api_gateway_db']
-                user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
-                return user['username'] if user else f"user_{user_id_or_error}"
-            if auth_header:
-                key_doc = client['api_gateway_db']['api_keys'].find_one({'key': token}, {'client_id': 1})
-                if key_doc: return key_doc['client_id']
-    return get_remote_address()
-
-limiter = Limiter(key_func=get_client_id, app=app, default_limits=["2000 per day", "500 per hour"], storage_uri="memory://")
-
-def require_auth(f):
+def check_lock(f):
     @wraps(f)
-    def wrapper(*args, **kwargs):
-        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
-        token = None
-        auth_type = "unknown"
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            auth_type = "header"
-        if not token:
-            token = request.cookies.get(app.config['JWT_COOKIE_NAME'])
-            auth_type = "cookie"
+    def decorated_function(collection_name, *args, **kwargs):
+        if request.method in ['POST', 'PUT', 'DELETE']:
+            db = get_db()
+            if db is not None:
+                config = get_config(db, collection_name)
+                if config.get('locked', False):
+                    return jsonify({"error": "Endpoint is LOCKED (Read-Only)"}), 403
+        return f(collection_name, *args, **kwargs)
+    return decorated_function
 
-        if not token: return jsonify({"error": "Authenticatie vereist (Bearer Token of Cookie)"}), 401
-            
-        client, _ = get_db_connection()
-        success, user_id_or_error = decode_auth_token(token)
-        
-        if success:
-            db = client['api_gateway_db']
-            try:
-                user = db['users'].find_one({'_id': ObjectId(user_id_or_error)}, {'username': 1})
-                client_id = user['username'] if user else f"user_{user_id_or_error}"
-                request.client_id = client_id
-                return f(*args, **kwargs)
-            except Exception as e:
-                return jsonify({"error": f"Ongeldige JWT Sub. Detail: {e}"}), 401
-        
-        if auth_type == "header":
-            jwt_error_detail = user_id_or_error
-            client_id = None
-            if client:
-                db = client['api_gateway_db']
-                key_doc = db['api_keys'].find_one({'key': token}, {'client_id': 1})
-                if key_doc: client_id = key_doc['client_id']
-            if client_id:
-                request.client_id = client_id
-                return f(*args, **kwargs)
-            else:
-                return jsonify({"error": f"Ongeldige Auth Token/Key. Detail: {jwt_error_detail}"}), 401
-        else:
-             return jsonify({"error": f"Sessie verlopen. (Detail: {user_id_or_error})"}), 401
-    return wrapper
+# --- AUTH & FORMATTERS ---
 
-def require_dashboard_auth(f):
+def require_client_id(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            flash("Log eerst in om het dashboard te bekijken.", "warning")
-            return redirect(url_for('dashboard_login'))
+        client_id = request.headers.get('x-client-id') or request.args.get('client_id')
+        if not client_id:
+            return jsonify({"error": "Missing x-client-id header"}), 400
+        g.client_id = client_id
         return f(*args, **kwargs)
     return decorated_function
 
-# --- CONTEXT PROCESSOR ---
-@app.context_processor
-def inject_sidebar_data():
-    if request.endpoint and 'static' not in request.endpoint:
-        return dict(all_tags=get_all_unique_tags(), tag_map=get_tag_color_map())
-    return dict()
+def format_doc(doc):
+    if isinstance(doc, list): return [format_doc(d) for d in doc]
+    if isinstance(doc, dict):
+        new_doc = {}
+        for k, v in doc.items():
+            if k == '_id': new_doc['_id'] = str(v)
+            elif k == '_meta':
+                new_doc['_client_id'] = v.get('owner')
+                if v.get('created_at'): 
+                    new_doc['_created_at'] = v.get('created_at').strftime('%Y-%m-%d %H:%M:%S')
+                if v.get('updated_at'): 
+                    new_doc['_updated_at'] = v.get('updated_at').strftime('%Y-%m-%d %H:%M:%S')
+            else: new_doc[k] = v
+        return new_doc
+    return doc
 
-# ---------------------------------------------------
+def clean_incoming_data(data):
+    if not isinstance(data, dict): return data
+    return {k: v for k, v in data.items() if not k.startswith('_')}
 
-# --- DASHBOARD LOGIC (Web Interface Routes) ---
+# --- ADMIN ROUTES ---
 
-@app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per 60 second", key_func=get_remote_address)
-def dashboard_login():
-    if 'username' in session: return redirect(url_for('dashboard'))
-    if request.method == 'POST':
-        client, _ = get_db_connection()
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if not client: 
-            flash("DB fout: Kan geen verbinding maken.", "danger")
-            return redirect(url_for('dashboard_login'))
-        db = client['api_gateway_db']
-        user = db['users'].find_one({'username': username})
-        if user and check_password(password, user['password_hash']):
-            session['username'] = username
-            flash(f"Succesvol ingelogd als {username}.", "success")
-            return redirect(url_for('dashboard'))
-        else:
-            log_statistic("login_failed_dashboard", get_remote_address(), "dashboard") 
-            flash("Ongeldige gebruikersnaam of wachtwoord.", "danger")
-            return redirect(url_for('dashboard_login'))
-    content = render_template_string(LOGIN_CONTENT)
-    return render_template_string(BASE_LAYOUT, page='login', page_content=content)
+@app.route('/api/admin/stats', methods=['GET'])
+def admin_stats():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
 
-@app.errorhandler(429)
-def ratelimit_handler(e):
-    log_statistic("ratelimit_hit", get_remote_address(), "dashboard")
-    flash(str(e.description), "danger")
-    return redirect(url_for('dashboard_login'))
+    cols = db.list_collection_names()
+    ignore = ['clients', 'statistics', 'system.indexes', '_g2_config', '_g2_snapshots', '_g2_errors']
+    endpoint_names = [c for c in cols if c not in ignore]
 
-@app.route('/logout')
-def dashboard_logout():
-    session.pop('username', None)
-    flash("Je bent uitgelogd.", "info")
-    return redirect(url_for('dashboard_login'))
+    endpoint_stats = []
+    total_records = 0
+    client_stats = []
 
+    configs = {doc['_id']: doc for doc in db['_g2_config'].find()}
+    db_stats = db.command("dbstats")
+    max_size = 1 
+    
+    col_sizes = {}
+    for c in endpoint_names:
+        try:
+            s = db.command("collstats", c)['size']
+            col_sizes[c] = s
+            if s > max_size: max_size = s
+        except:
+            col_sizes[c] = 0
+
+    for col_name in endpoint_names:
+        count = db[col_name].count_documents({})
+        total_records += count
+        
+        conf = configs.get(col_name, {})
+        last_act = conf.get('last_activity')
+        
+        endpoint_stats.append({
+            'name': col_name, 
+            'count': count,
+            'owners': db[col_name].distinct('_meta.owner'),
+            'size_pct': (col_sizes[col_name] / max_size) * 100,
+            'last_activity': last_act.isoformat() if last_act else None,
+            'locked': conf.get('locked', False),
+            'ttl': conf.get('ttl_days', 0)
+        })
+
+    client_config_docs = db['_g2_config'].find({'type': 'client_stats'})
+    c_last_seen_map = {d['client_id']: d.get('last_seen') for d in client_config_docs}
+
+    usage_map = {}
+    for col_name in endpoint_names:
+        pipeline = [{"$group": {"_id": "$_meta.owner", "count": {"$sum": 1}}}]
+        for res in db[col_name].aggregate(pipeline):
+            c_id = res['_id'] or "onbekend"
+            usage_map[c_id] = usage_map.get(c_id, 0) + res['count']
+    
+    for cid, count in usage_map.items():
+        ls = c_last_seen_map.get(cid)
+        client_stats.append({
+            'client_id': cid,
+            'total_records': count,
+            'last_seen': ls.isoformat() if ls else None
+        })
+
+    errors = list(db['_g2_errors'].find().sort('timestamp', -1).limit(10))
+    formatted_errors = [{
+        'time': e['timestamp'].isoformat(),
+        'ep': e['endpoint'],
+        'msg': e['error']
+    } for e in errors]
+
+    return jsonify({
+        'endpoints': endpoint_stats,
+        'clients': client_stats,
+        'errors': formatted_errors,
+        'db_info': {
+            'data_size_mb': round(db_stats.get('dataSize', 0) / (1024*1024), 2),
+            'total_objects': total_records
+        }
+    })
+
+@app.route('/api/admin/search', methods=['POST'])
+def admin_search():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
+    data = request.json
+    col = data.get('collection')
+    term = data.get('term')
+    
+    query = {}
+    if term:
+        try:
+            query = {"$or": [
+                {"_id": ObjectId(term)},
+                {"_meta.owner": {"$regex": term, "$options": "i"}}
+            ]}
+        except:
+            pass 
+
+    if not query and term:
+         try: query = {"_id": ObjectId(term)}
+         except: pass
+
+    docs = list(db[col].find(query).limit(50))
+    return jsonify(format_doc(docs))
+
+@app.route('/api/admin/bulk_delete', methods=['POST'])
+def admin_bulk_delete():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
+    data = request.json
+    col = data.get('collection')
+    ids = data.get('ids', [])
+    
+    obj_ids = [ObjectId(i) for i in ids]
+    res = db[col].delete_many({'_id': {'$in': obj_ids}})
+    return jsonify({"deleted": res.deleted_count})
+
+@app.route('/api/admin/clone', methods=['POST'])
+def admin_clone():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
+    data = request.json
+    src = data.get('source')
+    dest = data.get('destination')
+    
+    pipeline = [{"$match": {}}, {"$out": dest}]
+    db[src].aggregate(pipeline)
+    return jsonify({"status": "cloned"})
+
+@app.route('/api/admin/settings', methods=['POST'])
+def admin_settings():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
+    data = request.json
+    col = data.get('collection')
+    
+    update = {}
+    if 'locked' in data: update['locked'] = data['locked']
+    if 'ttl_days' in data: update['ttl_days'] = int(data['ttl_days'])
+    
+    db['_g2_config'].update_one({'_id': col}, {'$set': update}, upsert=True)
+    return jsonify({"status": "updated"})
+
+@app.route('/api/admin/cleanup', methods=['POST'])
+def admin_cleanup():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    
+    configs = db['_g2_config'].find({'ttl_days': {'$gt': 0}})
+    report = []
+    
+    for conf in configs:
+        days = conf['ttl_days']
+        col_name = conf['_id']
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+        res = db[col_name].delete_many({'_meta.created_at': {'$lt': cutoff}})
+        if res.deleted_count > 0:
+            report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
+            
+    return jsonify({"report": report})
+
+@app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT'])
+def admin_update_record(col_name, doc_id):
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    try:
+        new_doc = request.json
+        meta = {
+            'owner': new_doc.get('_client_id'),
+            'created_at': datetime.datetime.strptime(new_doc.get('_created_at'), '%Y-%m-%d %H:%M:%S') if new_doc.get('_created_at') else None,
+            'updated_at': datetime.datetime.utcnow()
+        }
+        data = clean_incoming_data(new_doc)
+        data['_meta'] = meta
+        db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
+        return jsonify({"status": "saved"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# --- STATIC FILES SUPPORT (Config + CSS) ---
+@app.route('/tailwind_config.js')
+def serve_tailwind_config():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'tailwind_config.js')
+
+@app.route('/app_styles.css')
+def serve_app_styles():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'app_styles.css')
+
+@app.route('/dashboard.html')
 @app.route('/')
-@require_dashboard_auth 
-def dashboard():
-    time_range = request.args.get('range', '6h')
-    login_range = request.args.get('login_range', '24h') 
-    
-    range_map = {
-        '6h': {'delta': datetime.timedelta(hours=6), 'label': 'Laatste 6 uur', 'group': '%H:00', 'fill': 'hour'},
-        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 uur', 'group': '%H:00', 'fill': 'hour'},
-        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste Week', 'group': '%a %d', 'fill': 'day'},
-        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste Maand', 'group': '%d %b', 'fill': 'day'},
-        '365d': {'delta': datetime.timedelta(days=365), 'label': 'Laatste Jaar', 'group': '%b %Y', 'fill': 'month'},
-    }
-    
-    login_range_map = {
-        '24h': {'delta': datetime.timedelta(hours=24), 'label': 'Laatste 24 Uur'},
-        '7d': {'delta': datetime.timedelta(days=7), 'label': 'Laatste 7 Dagen'},
-        '30d': {'delta': datetime.timedelta(days=30), 'label': 'Laatste 30 Dagen'},
-    }
-    
-    current_range = range_map.get(time_range, range_map['6h'])
-    current_login_range = login_range_map.get(login_range, login_range_map['24h'])
-    
-    start_time = datetime.datetime.utcnow() - current_range['delta']
-    login_start_time = datetime.datetime.utcnow() - current_login_range['delta']
-    
-    client, _ = get_db_connection()
-    db_connected = client is not None
-    stats_count = 0
-    unique_clients = []
-    chart_data = {"labels": [], "counts": []}
-    total_size = 0
-    failed_logins = {} 
+def dashboard_html():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists(os.path.join(root_dir, 'dashboard.html')):
+        return send_from_directory(root_dir, 'dashboard.html')
+    return "Dashboard HTML niet gevonden."
 
-    if db_connected:
-        try:
-            db = client['api_gateway_db']
-            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            stats_count = db['statistics'].count_documents({'timestamp': {'$gte': yesterday}})
-            unique_clients = db['statistics'].distinct('source', {'timestamp': {'$gte': yesterday}})
-            
-            endpoints = get_configured_endpoints()
-            for ep in endpoints:
-                 try: 
-                    coll_name = get_db_collection_name(ep['name'])
-                    s = db.command("collstats", coll_name)
-                    total_size += s.get('storageSize', 0)
-                 except: pass
+# Admin Routes (Legacy wrappers)
+@app.route('/api/admin/rename', methods=['POST'])
+def admin_rename():
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    d = request.json
+    try: db[d['old_name']].rename(d['new_name']); return jsonify({"status":"ok"})
+    except Exception as e: return jsonify({"error":str(e)}),400
 
-            pipeline = [
-                {'$match': {'timestamp': {'$gte': start_time}}},
-                {'$group': {
-                    '_id': {'$dateToString': {'format': current_range['group'], 'date': '$timestamp'}}, 
-                    'count': {'$sum': 1},
-                    'latest_time': {'$max': '$timestamp'}
-                }},
-                {'$sort': {'latest_time': 1}}
-            ]
-            agg_dict = {item['_id']: item['count'] for item in list(db['statistics'].aggregate(pipeline))}
-            
-            current = start_time
-            now = datetime.datetime.utcnow()
-            
-            if current_range['fill'] == 'hour':
-                step = datetime.timedelta(hours=1)
-                current = current.replace(minute=0, second=0, microsecond=0)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_data['labels'].append(label)
-                    chart_data['counts'].append(agg_dict.get(label, 0))
-                    current += step
-            elif current_range['fill'] == 'day':
-                step = datetime.timedelta(days=1)
-                current = current.replace(hour=0, minute=0, second=0, microsecond=0)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_data['labels'].append(label)
-                    chart_data['counts'].append(agg_dict.get(label, 0))
-                    current += step
-            elif current_range['fill'] == 'month':
-                current = datetime.datetime(current.year, current.month, 1)
-                while current < now:
-                    label = current.strftime(current_range['group'])
-                    chart_data['labels'].append(label)
-                    chart_data['counts'].append(agg_dict.get(label, 0))
-                    nm = current.month + 1
-                    ny = current.year
-                    if nm > 12:
-                        nm = 1
-                        ny += 1
-                    current = datetime.datetime(ny, nm, 1)
+@app.route('/api/admin/collections/<name>', methods=['DELETE'])
+def admin_del_col(name):
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    db[name].drop(); return jsonify({"status":"deleted"})
 
-            failed_logins_pipeline = [
-                {'$match': {
-                    'action': {'$in': ['login_failed', 'login_failed_dashboard', 'login_failed_db_error', 'login_failed_invalid_input']},
-                    'timestamp': {'$gte': login_start_time}
-                }},
-                {'$group': {
-                    '_id': '$source',
-                    'count': {'$sum': 1}
-                }},
-                {'$sort': {'count': -1}}
-            ]
-            failed_logins = {item['_id']: item['count'] for item in list(db['statistics'].aggregate(failed_logins_pipeline))}
-        except Exception as e:
-            print(f"Dashboard Data Error: {e}")
-            pass
-            
-    content = render_template_string(DASHBOARD_CONTENT,
-        db_connected=db_connected, stats_count=stats_count, client_count=len(unique_clients),
-        clients=unique_clients, chart_data=chart_data, total_storage=format_size(total_size),
-        time_range=time_range, current_range_label=current_range['label'],
-        login_range=login_range, login_range_label=current_login_range['label'],
-        failed_logins=failed_logins)
-    return render_template_string(BASE_LAYOUT, page='dashboard', page_content=content)
+@app.route('/api/admin/export/<name>', methods=['GET'])
+def admin_exp(name):
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    d = list(db[name].find({}))
+    return Response(json.dumps(format_doc(d), default=str), mimetype="application/json", headers={"Content-Disposition":f"attachment;filename={name}.json"})
 
-@app.route('/endpoints', methods=['GET', 'POST'])
-@require_dashboard_auth 
-def endpoints_page():
-    if request.method == 'POST':
-        name = request.form.get('name')
-        desc = request.form.get('description')
-        tags = request.form.get('tags')
-        
-        success, err = create_endpoint(name, desc, tags)
-        if success: flash(f"Endpoint '{name}' aangemaakt.", "success")
-        else: flash(f"Fout: {err}", "danger")
-        return redirect(url_for('endpoints_page'))
+@app.route('/api/admin/peek/<name>', methods=['GET'])
+def admin_peek(name):
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    d = list(db[name].find({}).sort('_id', -1).limit(5))
+    return jsonify(format_doc(d))
 
-    tag_filter = request.args.get('tag')
-    sort_by = request.args.get('sort', 'alpha') # Standaard alfabetisch
-    
-    endpoints = get_configured_endpoints(tag_filter=tag_filter, sort_by=sort_by)
-    for ep in endpoints:
-        ep['stats'] = get_endpoint_stats(ep['name'])
-        
-    content = render_template_string(ENDPOINTS_CONTENT, 
-                                     endpoints=endpoints, 
-                                     active_filter=tag_filter,
-                                     current_sort=sort_by)
-    return render_template_string(BASE_LAYOUT, page='endpoints', page_content=content)
+# --- GATEWAY ROUTES ---
 
-@app.route('/endpoints/update', methods=['POST'])
-@require_dashboard_auth
-def update_endpoint_route():
-    name = request.form.get('name')
-    desc = request.form.get('description')
-    tags = request.form.get('tags')
-    
-    success, err = update_endpoint_metadata(name, desc, tags)
-    if success: 
-        flash(f"Endpoint '{name}' bijgewerkt.", "success")
-    else: 
-        flash(f"Fout bij updaten: {err}", "danger")
-        
-    return redirect(url_for('endpoints_page'))
+@app.route('/api/<collection_name>', methods=['GET', 'POST'])
+@require_client_id
+@check_lock
+def api_collection(collection_name):
+    db = get_db()
+    if db is None: return jsonify({"error": "DB Offline"}), 503
+    try:
+        if request.method == 'GET':
+            log_activity(db, collection_name, g.client_id)
+            docs = list(db[collection_name].find({'_meta.owner': g.client_id}))
+            return jsonify(format_doc(docs)), 200
+        if request.method == 'POST':
+            log_activity(db, collection_name, g.client_id)
+            raw_data = request.get_json(silent=True) or {}
+            user_data = clean_incoming_data(raw_data)
+            user_data['_meta'] = {'owner': g.client_id, 'created_at': datetime.datetime.utcnow()}
+            result = db[collection_name].insert_one(user_data)
+            return jsonify({"_id": str(result.inserted_id), "status": "created"}), 201
+    except Exception as e:
+        log_activity(db, collection_name, g.client_id, is_error=True, error_msg=e)
+        return jsonify({"error": "Server Error"}), 500
 
-@app.route('/endpoints/delete', methods=['POST'])
-@require_dashboard_auth 
-def delete_endpoint_route():
-    name = request.form.get('name')
-    if delete_endpoint(name): flash(f"Endpoint '{name}' verwijderd.", "warning")
-    else: flash("Kon endpoint niet verwijderen.", "danger")
-    return redirect(url_for('endpoints_page'))
-
-@app.route('/endpoints/clear_data', methods=['POST'])
-@require_dashboard_auth
-def clear_data_route():
-    name = request.form.get('name')
-    success, result_or_err = clear_endpoint_data(name)
-    if success:
-        flash(f"Data van endpoint '{name}' succesvol gewist ({result_or_err} items verwijderd).", "success")
-    else:
-        flash(f"Kon data niet wissen: {result_or_err}", "danger")
-    return redirect(url_for('endpoints_page'))
-
-@app.route('/client/<source_app>')
-@require_dashboard_auth 
-def client_detail(source_app):
-    client, _ = get_db_connection()
-    logs = []
-    total_requests = 0
-    has_key = False
-    is_user = False
-    
-    if client:
-        db = client['api_gateway_db']
-        yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-        total_requests = db['statistics'].count_documents({'source': source_app, 'timestamp': {'$gte': yesterday}})
-        if db['api_keys'].find_one({'client_id': source_app}): has_key = True
-        if db['users'].find_one({'username': source_app}): is_user = True
-        cursor = db['statistics'].find({'source': source_app}).sort('timestamp', -1).limit(20)
-        for doc in cursor:
-            logs.append({
-                'timestamp': doc['timestamp'].isoformat(), 
-                'action': doc.get('action', '-'),
-                'endpoint': doc.get('endpoint', 'general')
-            })
-            
-    content = render_template_string(CLIENT_DETAIL_CONTENT, 
-                                   source_app=source_app, 
-                                   logs=logs,
-                                   total_requests=total_requests,
-                                   has_key=has_key,
-                                   is_user=is_user)
-    return render_template_string(BASE_LAYOUT, page='detail', page_content=content)
-
-@app.route('/settings/tags/update', methods=['POST'])
-@require_dashboard_auth
-def update_tag_route():
-    original_name = request.form.get('original_name')
-    new_name = request.form.get('new_name')
-    color = request.form.get('color')
-    
-    if not new_name:
-        flash("Naam mag niet leeg zijn", "danger")
-        return redirect(url_for('settings'))
-        
-    success, err = update_tag_settings(original_name, new_name, color)
-    if success:
-        if original_name != new_name:
-            flash(f"Tag hernoemd van '{original_name}' naar '{new_name}' en kleur opgeslagen.", "success")
-        else:
-            flash(f"Instellingen voor tag '{new_name}' opgeslagen.", "success")
-    else:
-        flash(f"Fout bij opslaan tag: {err}", "danger")
-        
-    return redirect(url_for('settings'))
-
-@app.route('/settings', methods=['GET', 'POST'])
-@require_dashboard_auth 
-def settings():
-    client, _ = get_db_connection()
-    db = client['api_gateway_db'] if client else None
-    
-    if request.method == 'POST':
-        action = request.form.get('action')
-        if action == 'create_user':
-            username = request.form.get('username')
-            password = request.form.get('password')
-            token_validity = int(request.form.get('token_validity_minutes', 1440))
-            if db is None:
-                flash("Fout: Geen DB verbinding.", "danger")
-            elif not username or not password:
-                flash("Fout: Gebruikersnaam en wachtwoord zijn verplicht.", "danger")
-            else:
-                try:
-                    result = db['users'].insert_one({
-                        'username': username,
-                        'password_hash': hash_password(password),
-                        'created_at': datetime.datetime.utcnow(),
-                        'role': 'admin',
-                        'token_validity_minutes': token_validity 
-                    })
-                    new_user_id = result.inserted_id
-                    new_token = encode_auth_token(new_user_id, token_validity)
-                    days = token_validity // 1440
-                    time_msg = f"{days} dagen" if days >= 1 else "24 uur"
-                    token_html = f"""
-                    <p class="mb-2">Gebruiker **{username}** succesvol aangemaakt. Hier is het nieuwe JWT:</p>
-                    <div class="d-flex align-items-center">
-                        <input type="text" class="form-control bg-dark text-warning small font-monospace jwt-input-fix" readonly 
-                            value="{new_token}" id="jwt-token-input">
-                        <button type="button" class="btn btn-warning ms-2 flex-shrink-0" id="jwt-copy-button" title="Kopieer JWT">
-                            <i class="bi bi-clipboard"></i> Kopieer Token
-                        </button>
-                    </div>
-                    <p class="mt-2 small text-muted">Dit token is <b>{time_msg}</b> geldig.</p>
-                    """
-                    flash(token_html, "success")
-                except OperationFailure as e:
-                    if "E11000 duplicate key" in str(e): flash(f"Fout: Gebruikersnaam '{username}' bestaat al.", "danger")
-                    else: flash(f"Fout bij aanmaken gebruiker: {e}", "danger")
-                except Exception as e: flash(f"Onverwachte fout: {e}", "danger")
-
-        elif action == 'delete_user':
-            username = request.form.get('username')
-            success, err = delete_user_db(username)
-            if success: flash(f"Gebruiker '{username}' verwijderd. Actieve JWT's zijn ongeldig geworden.", "warning")
-            else: flash(f"Fout: {err}", "danger")
-        elif action == 'revoke_key':
-            revoke_api_key_db(request.form.get('client_id'))
-        elif action == 'save_uri':
-            app.config['MONGO_URI'] = request.form.get('mongo_uri')
-            flash("URI opgeslagen", "info")
-            
-        return redirect(url_for('settings'))
-
-    api_keys = load_api_keys()
-    active_users = load_all_users() 
-    content = render_template_string(SETTINGS_CONTENT, 
-                                     api_keys=api_keys, 
-                                     active_users=active_users,
-                                     current_uri=app.config['MONGO_URI'])
-    return render_template_string(BASE_LAYOUT, page='settings', page_content=content)
-
-@app.route('/api/health')
-def health():
-    client, _ = get_db_connection()
-    return jsonify({"status": "running", "db": "ok" if client else "error"})
-
-# --- DYNAMIC API ENDPOINT (General) ---
-@app.route('/api/<endpoint_name>', methods=['GET', 'POST', 'DELETE'])
-@require_auth
-@limiter.limit("1000 per hour")
-def handle_dynamic_endpoint(endpoint_name):
-    client, _ = get_db_connection()
-    if not client: return jsonify({"error": "DB failure"}), 503
-    db = client['api_gateway_db']
-    
-    if endpoint_name not in ['data', 'items', 'projects'] and not db['endpoints'].find_one({'name': endpoint_name}):
-        return jsonify({"error": f"Endpoint '{endpoint_name}' not found"}), 404
-
-    coll_name = get_db_collection_name(endpoint_name)
-    collection = db[coll_name]
-    client_id = getattr(request, 'client_id', 'unknown')
-
-    if request.method == 'POST':
-        data = request.json
-        if not data: return jsonify({"error": "No JSON"}), 400
-        data['meta'] = {"created_at": datetime.datetime.utcnow(), "client_id": client_id}
-        try:
-            result = collection.insert_one(data)
-            log_statistic("post_data", client_id, endpoint_name)
-            saved_doc = collection.find_one({'_id': result.inserted_id})
-            if saved_doc:
-                saved_doc['id'] = str(saved_doc['_id'])
-                del saved_doc['_id']
-                return jsonify({"id": saved_doc['id'], "data": saved_doc}), 201
-            else: return jsonify({"status": "created", "id": str(result.inserted_id), "data": {}}), 201
-        except Exception as e:
-            return jsonify({"error": f"Kon document niet opslaan: {e}"}), 500
-
-    elif request.method == 'GET':
-        query = {}
-        for k, v in request.args.items():
-            if k != '_limit': query[k] = v 
-        query['meta.client_id'] = client_id
-        limit = int(request.args.get('_limit', 50))
-        docs = list(collection.find(query).sort("meta.created_at", -1).limit(limit))
-        result_docs = []
-        for d in docs:
-            d['id'] = str(d['_id'])
-            del d['_id']
-            result_docs.append({"id": d['id'], "data": d })
-        log_statistic("read_data", client_id, endpoint_name)
-        return jsonify(result_docs), 200
-
-    elif request.method == 'DELETE':
-        query = {}
-        for k, v in request.args.items(): query[k] = v
-        if not query: return jsonify({"error": "DELETE requires query parameters for safety"}), 400
-        query['meta.client_id'] = client_id
-        result = collection.delete_many(query)
-        log_statistic("delete_bulk", client_id, endpoint_name)
-        return jsonify({"status": "deleted", "count": result.deleted_count}), 200
-
-    return jsonify({"error": "Method not allowed"}), 405
-
-# --- SINGLE DOCUMENT OPERATIONS ---
-@app.route('/api/<endpoint_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
-@require_auth
-@limiter.limit("1000 per hour")
-def handle_single_document(endpoint_name, doc_id):
-    client, _ = get_db_connection()
-    if not client: return jsonify({"error": "DB failure"}), 503
-    db = client['api_gateway_db']
-
-    coll_name = get_db_collection_name(endpoint_name)
-    collection = db[coll_name]
-    client_id = getattr(request, 'client_id', 'unknown')
-
-    try: oid = ObjectId(doc_id)
-    except: return jsonify({"error": "Invalid ID format"}), 400
-
-    if request.method == 'GET':
-        doc = collection.find_one({'_id': oid})
-        if not doc: return jsonify({"error": "Not found"}), 404
-        if doc.get('meta', {}).get('client_id') != client_id: return jsonify({"error": "Not found or access denied"}), 403
-        doc['id'] = str(doc['_id'])
-        del doc['_id']
-        log_statistic("read_one", client_id, endpoint_name)
-        return jsonify({"id": doc['id'], "data": doc}), 200
-
-    elif request.method == 'PUT':
-        data = request.json
-        if not data: return jsonify({"error": "No JSON"}), 400
-        update_doc = data.copy()
-        if 'id' in update_doc: del update_doc['id'] 
-        if '_id' in update_doc: del update_doc['_id'] 
-        if 'meta' in update_doc: del update_doc['meta'] 
-        update_doc['meta'] = data.get('meta', {})
-        update_doc['meta']['updated_at'] = datetime.datetime.utcnow()
-        update_doc['meta']['client_id'] = client_id 
-
-        result = collection.update_one({'_id': oid, 'meta.client_id': client_id}, {'$set': update_doc})
-        if result.matched_count == 0: return jsonify({"error": "Not found or access denied"}), 404
-        updated_doc = collection.find_one({'_id': oid})
-        updated_doc['id'] = str(updated_doc['_id'])
-        del updated_doc['_id']
-        log_statistic("update_one", client_id, endpoint_name)
-        return jsonify({"id": updated_doc['id'], "data": updated_doc}), 200
-
-    elif request.method == 'DELETE':
-        result = collection.delete_one({'_id': oid, 'meta.client_id': client_id})
-        if result.deleted_count == 0: return jsonify({"error": "Not found or access denied"}), 404
-        log_statistic("delete_one", client_id, endpoint_name)
-        return jsonify({"status": "deleted"}), 204
-
-    return jsonify({"error": "Method not allowed"}), 405
+@app.route('/api/<collection_name>/<doc_id>', methods=['GET', 'PUT', 'DELETE'])
+@require_client_id
+@check_lock
+def api_document(collection_name, doc_id):
+    db = get_db()
+    if db is None: return jsonify({"error": "DB Offline"}), 503
+    try:
+        try: q_id = ObjectId(doc_id)
+        except: q_id = doc_id
+        query = {'_id': q_id, '_meta.owner': g.client_id}
+        col = db[collection_name]
+        if request.method == 'GET':
+            log_activity(db, collection_name, g.client_id)
+            doc = col.find_one(query)
+            return (jsonify(format_doc(doc)), 200) if doc else (jsonify({"error": "Not found"}), 404)
+        if request.method == 'PUT':
+            log_activity(db, collection_name, g.client_id)
+            user_data = clean_incoming_data(request.get_json(silent=True) or {})
+            res = col.update_one(query, {'$set': user_data, '$set': {'_meta.updated_at': datetime.datetime.utcnow()}})
+            return jsonify({"status": "updated" if res.matched_count else "not found"}), 200
+        if request.method == 'DELETE':
+            log_activity(db, collection_name, g.client_id)
+            res = col.delete_one(query)
+            return jsonify({"status": "deleted" if res.deleted_count else "not found"}), 200
+    except Exception as e:
+        log_activity(db, collection_name, g.client_id, is_error=True, error_msg=e)
+        return jsonify({"error": "Server Error"}), 500
 
 if __name__ == '__main__':
-    get_db_connection()
     app.run(host='0.0.0.0', port=5000, debug=True)
