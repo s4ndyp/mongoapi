@@ -31,8 +31,8 @@ def log_activity(db, col_name, client_id, is_error=False, error_msg=None):
     try:
         now = datetime.datetime.utcnow()
         db['_g2_config'].update_one(
-            {'_id': col_name}, 
-            {'$set': {'last_activity': now}}, 
+            {'_id': col_name},
+            {'$set': {'last_activity': now}},
             upsert=True
         )
         if client_id:
@@ -83,9 +83,9 @@ def format_doc(doc):
             if k == '_id': new_doc['_id'] = str(v)
             elif k == '_meta':
                 new_doc['_client_id'] = v.get('owner')
-                if v.get('created_at'): 
+                if v.get('created_at'):
                     new_doc['_created_at'] = v.get('created_at').strftime('%Y-%m-%d %H:%M:%S')
-                if v.get('updated_at'): 
+                if v.get('updated_at'):
                     new_doc['_updated_at'] = v.get('updated_at').strftime('%Y-%m-%d %H:%M:%S')
             else: new_doc[k] = v
         return new_doc
@@ -101,19 +101,15 @@ def clean_incoming_data(data):
 def admin_stats():
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-
     cols = db.list_collection_names()
     ignore = ['clients', 'statistics', 'system.indexes', '_g2_config', '_g2_snapshots', '_g2_errors']
     endpoint_names = [c for c in cols if c not in ignore]
-
     endpoint_stats = []
     total_records = 0
     client_stats = []
-
     configs = {doc['_id']: doc for doc in db['_g2_config'].find()}
     db_stats = db.command("dbstats")
-    max_size = 1 
-    
+    max_size = 1
     col_sizes = {}
     for c in endpoint_names:
         try:
@@ -126,12 +122,10 @@ def admin_stats():
     for col_name in endpoint_names:
         count = db[col_name].count_documents({})
         total_records += count
-        
         conf = configs.get(col_name, {})
         last_act = conf.get('last_activity')
-        
         endpoint_stats.append({
-            'name': col_name, 
+            'name': col_name,
             'count': count,
             'owners': db[col_name].distinct('_meta.owner'),
             'size_pct': (col_sizes[col_name] / max_size) * 100,
@@ -142,14 +136,13 @@ def admin_stats():
 
     client_config_docs = db['_g2_config'].find({'type': 'client_stats'})
     c_last_seen_map = {d['client_id']: d.get('last_seen') for d in client_config_docs}
-
     usage_map = {}
     for col_name in endpoint_names:
         pipeline = [{"$group": {"_id": "$_meta.owner", "count": {"$sum": 1}}}]
         for res in db[col_name].aggregate(pipeline):
             c_id = res['_id'] or "onbekend"
             usage_map[c_id] = usage_map.get(c_id, 0) + res['count']
-    
+
     for cid, count in usage_map.items():
         ls = c_last_seen_map.get(cid)
         client_stats.append({
@@ -179,11 +172,9 @@ def admin_stats():
 def admin_search():
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
     data = request.json
     col = data.get('collection')
     term = data.get('term')
-    
     query = {}
     if term:
         try:
@@ -192,24 +183,69 @@ def admin_search():
                 {"_meta.owner": {"$regex": term, "$options": "i"}}
             ]}
         except:
-            pass 
-
+            pass
     if not query and term:
-         try: query = {"_id": ObjectId(term)}
-         except: pass
+        try: query = {"_id": ObjectId(term)}
+        except: pass
 
-    docs = list(db[col].find(query).limit(50))
+    docs = list(db[col].find(query).limit(100))
     return jsonify(format_doc(docs))
+
+@app.route('/api/admin/import', methods=['POST'])
+def admin_import():
+    """Importeert records met een specifiek opgegeven owner."""
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    try:
+        payload = request.json
+        col_name = payload.get('collection')
+        records = payload.get('records')
+        target_owner = payload.get('owner', 'ADMIN_IMPORT')
+        clear_first = payload.get('clear_first', False)
+
+        if not col_name or not isinstance(records, list):
+            return jsonify({'error': 'Ongeldige data'}), 400
+
+        if clear_first:
+            db[col_name].delete_many({})
+
+        inserted_count = 0
+        batch = []
+        for rec in records:
+            clean_rec = clean_incoming_data(rec)
+            clean_rec['_meta'] = {
+                'owner': target_owner,
+                'created_at': datetime.datetime.utcnow(),
+                'import_batch': True
+            }
+            batch.append(clean_rec)
+
+        if batch:
+            res = db[col_name].insert_many(batch)
+            inserted_count = len(res.inserted_ids)
+
+        return jsonify({'count': inserted_count})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/clear', methods=['POST'])
+def admin_clear():
+    """(NIEUW) Wist alle records in een collectie, maar behoudt de collectie zelf."""
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    data = request.json
+    col = data.get('collection')
+    if not col: return jsonify({'error': 'Geen collectie opgegeven'}), 400
+    res = db[col].delete_many({})
+    return jsonify({"deleted": res.deleted_count})
 
 @app.route('/api/admin/bulk_delete', methods=['POST'])
 def admin_bulk_delete():
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
     data = request.json
     col = data.get('collection')
     ids = data.get('ids', [])
-    
     obj_ids = [ObjectId(i) for i in ids]
     res = db[col].delete_many({'_id': {'$in': obj_ids}})
     return jsonify({"deleted": res.deleted_count})
@@ -218,11 +254,9 @@ def admin_bulk_delete():
 def admin_clone():
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
     data = request.json
     src = data.get('source')
     dest = data.get('destination')
-    
     pipeline = [{"$match": {}}, {"$out": dest}]
     db[src].aggregate(pipeline)
     return jsonify({"status": "cloned"})
@@ -231,14 +265,11 @@ def admin_clone():
 def admin_settings():
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
     data = request.json
     col = data.get('collection')
-    
     update = {}
     if 'locked' in data: update['locked'] = data['locked']
     if 'ttl_days' in data: update['ttl_days'] = int(data['ttl_days'])
-    
     db['_g2_config'].update_one({'_id': col}, {'$set': update}, upsert=True)
     return jsonify({"status": "updated"})
 
@@ -246,10 +277,8 @@ def admin_settings():
 def admin_cleanup():
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    
     configs = db['_g2_config'].find({'ttl_days': {'$gt': 0}})
     report = []
-    
     for conf in configs:
         days = conf['ttl_days']
         col_name = conf['_id']
@@ -257,7 +286,6 @@ def admin_cleanup():
         res = db[col_name].delete_many({'_meta.created_at': {'$lt': cutoff}})
         if res.deleted_count > 0:
             report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
-            
     return jsonify({"report": report})
 
 @app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT'])
@@ -278,7 +306,8 @@ def admin_update_record(col_name, doc_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# --- STATIC FILES SUPPORT (Config + CSS) ---
+# --- STATIC FILES ---
+
 @app.route('/tailwind_config.js')
 def serve_tailwind_config():
     root_dir = os.path.dirname(os.path.abspath(__file__))
@@ -297,7 +326,8 @@ def dashboard_html():
         return send_from_directory(root_dir, 'dashboard.html')
     return "Dashboard HTML niet gevonden."
 
-# Admin Routes (Legacy wrappers)
+# Legacy Wrappers
+
 @app.route('/api/admin/rename', methods=['POST'])
 def admin_rename():
     db = get_db()
@@ -323,7 +353,7 @@ def admin_exp(name):
 def admin_peek(name):
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
-    d = list(db[name].find({}).sort('_id', -1).limit(5))
+    d = list(db[name].find({}).sort('_id', -1).limit(20))
     return jsonify(format_doc(d))
 
 # --- GATEWAY ROUTES ---
@@ -339,6 +369,7 @@ def api_collection(collection_name):
             log_activity(db, collection_name, g.client_id)
             docs = list(db[collection_name].find({'_meta.owner': g.client_id}))
             return jsonify(format_doc(docs)), 200
+
         if request.method == 'POST':
             log_activity(db, collection_name, g.client_id)
             raw_data = request.get_json(silent=True) or {}
@@ -361,21 +392,34 @@ def api_document(collection_name, doc_id):
         except: q_id = doc_id
         query = {'_id': q_id, '_meta.owner': g.client_id}
         col = db[collection_name]
+
         if request.method == 'GET':
             log_activity(db, collection_name, g.client_id)
             doc = col.find_one(query)
             return (jsonify(format_doc(doc)), 200) if doc else (jsonify({"error": "Not found"}), 404)
+
         if request.method == 'PUT':
             log_activity(db, collection_name, g.client_id)
             user_data = clean_incoming_data(request.get_json(silent=True) or {})
-            res = col.update_one(query, {'$set': user_data, '$set': {'_meta.updated_at': datetime.datetime.utcnow()}})
-            return jsonify({"status": "updated" if res.matched_count else "not found"}), 200
+            # GECORRIGEERD: Combineer beide $set operaties in één dict
+            update_payload = {**user_data, '_meta.updated_at': datetime.datetime.utcnow()}
+            res = col.update_one(query, {'$set': update_payload})
+            if res.matched_count:
+                # Haal de bijgewerkte doc op voor bevestiging
+                updated_doc = col.find_one(query)
+                return jsonify({"status": "updated", **format_doc(updated_doc)}), 200
+            else:
+                return jsonify({"status": "not found"}), 404
+
         if request.method == 'DELETE':
             log_activity(db, collection_name, g.client_id)
             res = col.delete_one(query)
             return jsonify({"status": "deleted" if res.deleted_count else "not found"}), 200
+
     except Exception as e:
         log_activity(db, collection_name, g.client_id, is_error=True, error_msg=e)
+        print(f"ERROR in api_document: {e}")
+        traceback.print_exc()
         return jsonify({"error": "Server Error"}), 500
 
 if __name__ == '__main__':
