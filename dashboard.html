@@ -200,6 +200,9 @@
 
                             <div class="flex-grow flex flex-col h-full relative p-6">
                                 <div id="editor-actions" class="hidden absolute top-10 right-10 z-10 flex gap-2">
+                                    <button onclick="deleteCurrentRecord()" class="px-6 py-2 bg-red-500 text-white rounded-xl text-xs font-bold shadow-xl shadow-red-500/20 hover:opacity-90 transition" title="Verwijder record">
+                                        <i class="fas fa-trash-alt mr-2"></i>Verwijder
+                                    </button>
                                     <button onclick="saveRecord()" class="px-6 py-2 bg-secondary text-white rounded-xl text-xs font-bold shadow-xl shadow-secondary/20 hover:opacity-90 transition">
                                         <i class="fas fa-save mr-2"></i>Bewaar wijzigingen
                                     </button>
@@ -420,19 +423,18 @@
             resultsDiv.innerHTML = docs.map(d => {
                 const idHighlighted = highlightText(d._id, filterTerm);
                 const clientIdHighlighted = highlightText(d._client_id || '', filterTerm);
-                const idEscaped = JSON.stringify(d._id); // Properly escape ID for JavaScript
-                
+
                 return `
-                <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 hover:border-primary/50 hover:bg-primary/5 transition-all group relative">
+                <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 hover:border-primary/50 hover:bg-primary/5 transition-all group relative" data-record-id="${d._id}">
                     <div class="flex items-start justify-between gap-2">
-                        <div class="flex-grow cursor-pointer" onclick="loadRecord(${idEscaped})">
+                        <div class="flex-grow cursor-pointer record-item">
                             <div class="text-[11px] text-primary font-bold font-mono group-hover:scale-[1.02] transition-transform">${idHighlighted}</div>
                             <div class="flex justify-between mt-2">
                                 <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${clientIdHighlighted}</span>
                                 <span class="text-[9px] text-slate-600">${d._created_at || ''}</span>
                             </div>
                         </div>
-                        <button onclick="deleteRecord(${idEscaped}, event)" class="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100" title="Verwijder record">
+                        <button class="delete-btn p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100" title="Verwijder record">
                             <i class="fas fa-trash-alt text-sm"></i>
                         </button>
                     </div>
@@ -505,6 +507,31 @@
                 await fetch(`${API}/api/admin/record/${currentEp}/${currentRecordId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
                 refresh();
             } catch(e) { console.error("Invalid JSON"); }
+        }
+
+        async function deleteCurrentRecord() {
+            if (!currentRecordId) return;
+            if (!confirm('Weet u zeker dat u dit record wilt verwijderen?')) return;
+
+            try {
+                const res = await fetch(`${API}/api/admin/record/${currentEp}/${currentRecordId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    // Remove from searchResults if it exists there
+                    searchResults = searchResults.filter(d => d._id !== currentRecordId);
+                    filterSearchResults();
+
+                    // Clear the editor
+                    document.getElementById('json-editor').classList.add('hidden');
+                    document.getElementById('editor-placeholder').classList.remove('hidden');
+                    document.getElementById('editor-actions').classList.add('hidden');
+                    currentRecordId = null;
+
+                    refresh();
+                }
+            } catch (e) {
+                console.error('Error deleting record:', e);
+                alert('Fout bij verwijderen van record');
+            }
         }
 
         function triggerImport() { document.getElementById('import-input').click(); }
@@ -585,7 +612,7 @@
             if(s<60) return s+"s"; if(s<3600) return Math.floor(s/60)+"m"; if(s<86400) return Math.floor(s/3600)+"u"; return Math.floor(s/86400)+"d";
         }
 
-        // Add event listener for search field filtering
+        // Add event listeners for search field filtering and record interactions
         (function() {
             const searchInput = document.getElementById('search-term');
             if (searchInput) {
@@ -598,6 +625,27 @@
                 searchInput.addEventListener('keypress', function(e) {
                     if (e.key === 'Enter') {
                         doSearch();
+                    }
+                });
+            }
+
+            // Event delegation for record clicks and delete buttons
+            const searchResultsDiv = document.getElementById('search-results');
+            if (searchResultsDiv) {
+                searchResultsDiv.addEventListener('click', function(e) {
+                    const target = e.target.closest('.record-item');
+                    const deleteBtn = e.target.closest('.delete-btn');
+                    const recordDiv = e.target.closest('[data-record-id]');
+
+                    if (deleteBtn && recordDiv) {
+                        // Handle delete button click
+                        e.stopPropagation();
+                        const recordId = recordDiv.getAttribute('data-record-id');
+                        deleteRecord(recordId, e);
+                    } else if (target && recordDiv) {
+                        // Handle record click
+                        const recordId = recordDiv.getAttribute('data-record-id');
+                        loadRecord(recordId);
                     }
                 });
             }
