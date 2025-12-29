@@ -293,10 +293,7 @@ def admin_update_record(col_name, doc_id):
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
     try:
-        if request.method == 'DELETE':
-            res = db[col_name].delete_one({'_id': ObjectId(doc_id)})
-            return jsonify({"status": "deleted" if res.deleted_count else "not found"}), 200
-        else:  # PUT
+        if request.method == 'PUT':
             new_doc = request.json
             meta = {
                 'owner': new_doc.get('_client_id'),
@@ -307,6 +304,12 @@ def admin_update_record(col_name, doc_id):
             data['_meta'] = meta
             db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
             return jsonify({"status": "saved"})
+        elif request.method == 'DELETE':
+            result = db[col_name].delete_one({'_id': ObjectId(doc_id)})
+            if result.deleted_count > 0:
+                return jsonify({"status": "deleted"})
+            else:
+                return jsonify({"error": "Record not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
