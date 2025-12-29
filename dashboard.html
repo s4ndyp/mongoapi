@@ -284,6 +284,7 @@
         let currentFilter = { type: 'ALL', value: null };
         let currentEp = null;
         let currentRecordId = null;
+        let searchResults = []; // Store search results for client-side filtering
 
         async function refresh() {
             const icon = document.getElementById('refresh-icon');
@@ -396,19 +397,93 @@
             if(ep.ttl > 0) document.getElementById('det-ttl-val').innerText = ep.ttl;
         }
 
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function highlightText(text, term) {
+            if (!term) return escapeHtml(text);
+            const escapedText = escapeHtml(text);
+            const regex = new RegExp(`(${escapeHtml(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+            return escapedText.replace(regex, '<mark class="bg-yellow-500/30 text-yellow-200">$1</mark>');
+        }
+
+        function renderSearchResults(docs, filterTerm = '') {
+            const resultsDiv = document.getElementById('search-results');
+            if (docs.length === 0) {
+                resultsDiv.innerHTML = '<div class="text-center mt-20 text-xs text-slate-600">Geen resultaten gevonden</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = docs.map(d => {
+                const idHighlighted = highlightText(d._id, filterTerm);
+                const clientIdHighlighted = highlightText(d._client_id || '', filterTerm);
+                
+                return `
+                <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 hover:border-primary/50 hover:bg-primary/5 transition-all group relative">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="flex-grow cursor-pointer" onclick="loadRecord('${d._id}')">
+                            <div class="text-[11px] text-primary font-bold font-mono group-hover:scale-[1.02] transition-transform">${idHighlighted}</div>
+                            <div class="flex justify-between mt-2">
+                                <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${clientIdHighlighted}</span>
+                                <span class="text-[9px] text-slate-600">${d._created_at || ''}</span>
+                            </div>
+                        </div>
+                        <button onclick="deleteRecord('${d._id}', event)" class="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100" title="Verwijder record">
+                            <i class="fas fa-trash-alt text-sm"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         async function doSearch() {
             const term = document.getElementById('search-term').value;
             const res = await fetch(`${API}/api/admin/search`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, term })});
             const docs = await res.json();
-            document.getElementById('search-results').innerHTML = docs.map(d => `
-                <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all group" onclick="loadRecord('${d._id}')">
-                    <div class="text-[11px] text-primary font-bold font-mono group-hover:scale-[1.02] transition-transform">${d._id}</div>
-                    <div class="flex justify-between mt-2">
-                        <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${d._client_id}</span>
-                        <span class="text-[9px] text-slate-600">${d._created_at}</span>
-                    </div>
-                </div>
-            `).join('');
+            searchResults = docs; // Store results for client-side filtering
+            filterSearchResults();
+        }
+
+        function filterSearchResults() {
+            const filterTerm = document.getElementById('search-term').value.toLowerCase();
+            let filtered = searchResults;
+            
+            if (filterTerm) {
+                filtered = searchResults.filter(d => {
+                    const searchableText = JSON.stringify(d).toLowerCase();
+                    return searchableText.includes(filterTerm);
+                });
+            }
+            
+            renderSearchResults(filtered, filterTerm);
+        }
+
+        async function deleteRecord(recordId, event) {
+            event.stopPropagation(); // Prevent triggering loadRecord
+            if (!confirm('Weet u zeker dat u dit record wilt verwijderen?')) return;
+            
+            try {
+                const res = await fetch(`${API}/api/admin/record/${currentEp}/${recordId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    // Remove from searchResults
+                    searchResults = searchResults.filter(d => d._id !== recordId);
+                    filterSearchResults();
+                    // If currently viewing this record, clear the editor
+                    if (currentRecordId === recordId) {
+                        document.getElementById('json-editor').classList.add('hidden');
+                        document.getElementById('editor-placeholder').classList.remove('hidden');
+                        document.getElementById('editor-actions').classList.add('hidden');
+                        currentRecordId = null;
+                    }
+                    refresh();
+                }
+            } catch (e) {
+                console.error('Error deleting record:', e);
+                alert('Fout bij verwijderen van record');
+            }
         }
 
         async function loadRecord(id) {
@@ -508,6 +583,24 @@
             const s = Math.floor((new Date() - new Date(d))/1000);
             if(s<60) return s+"s"; if(s<3600) return Math.floor(s/60)+"m"; if(s<86400) return Math.floor(s/3600)+"u"; return Math.floor(s/86400)+"d";
         }
+
+        // Add event listener for search field filtering
+        (function() {
+            const searchInput = document.getElementById('search-term');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    if (searchResults.length > 0) {
+                        filterSearchResults();
+                    }
+                });
+                // Allow Enter key to trigger search
+                searchInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        doSearch();
+                    }
+                });
+            }
+        })();
 
         refresh();
         setInterval(refresh, 60000);

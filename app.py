@@ -288,21 +288,25 @@ def admin_cleanup():
             report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
     return jsonify({"report": report})
 
-@app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT'])
+@app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT', 'DELETE'])
 def admin_update_record(col_name, doc_id):
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
     try:
-        new_doc = request.json
-        meta = {
-            'owner': new_doc.get('_client_id'),
-            'created_at': datetime.datetime.strptime(new_doc.get('_created_at'), '%Y-%m-%d %H:%M:%S') if new_doc.get('_created_at') else None,
-            'updated_at': datetime.datetime.utcnow()
-        }
-        data = clean_incoming_data(new_doc)
-        data['_meta'] = meta
-        db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
-        return jsonify({"status": "saved"})
+        if request.method == 'DELETE':
+            res = db[col_name].delete_one({'_id': ObjectId(doc_id)})
+            return jsonify({"status": "deleted" if res.deleted_count else "not found"}), 200
+        else:  # PUT
+            new_doc = request.json
+            meta = {
+                'owner': new_doc.get('_client_id'),
+                'created_at': datetime.datetime.strptime(new_doc.get('_created_at'), '%Y-%m-%d %H:%M:%S') if new_doc.get('_created_at') else None,
+                'updated_at': datetime.datetime.utcnow()
+            }
+            data = clean_incoming_data(new_doc)
+            data['_meta'] = meta
+            db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
+            return jsonify({"status": "saved"})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
