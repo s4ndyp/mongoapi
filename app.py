@@ -239,6 +239,19 @@ def admin_clear():
     res = db[col].delete_many({})
     return jsonify({"deleted": res.deleted_count})
 
+@app.route('/api/admin/clear_user_records', methods=['POST'])
+def admin_clear_user_records():
+    """Wist alle records van een specifieke gebruiker in een collectie."""
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    data = request.json
+    col = data.get('collection')
+    client_id = data.get('client_id')
+    if not col: return jsonify({'error': 'Geen collectie opgegeven'}), 400
+    if not client_id: return jsonify({'error': 'Geen client_id opgegeven'}), 400
+    res = db[col].delete_many({'_meta.owner': client_id})
+    return jsonify({"deleted": res.deleted_count})
+
 @app.route('/api/admin/bulk_delete', methods=['POST'])
 def admin_bulk_delete():
     db = get_db()

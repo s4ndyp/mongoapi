@@ -165,6 +165,7 @@
                             <button onclick="triggerImport()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Import"><i class="fas fa-upload"></i></button>
                             <button onclick="doClone()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Kloon"><i class="fas fa-copy"></i></button>
                             <button onclick="truncateEndpoint()" class="w-10 h-10 rounded-xl bg-yellow-500/10 hover:bg-yellow-500/20 flex items-center justify-center text-yellow-500 transition border border-yellow-500/20" title="Leegmaken"><i class="fas fa-eraser"></i></button>
+                            <button onclick="clearUserRecords()" class="w-10 h-10 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 flex items-center justify-center text-orange-500 transition border border-orange-500/20" title="Verwijder gebruiker records"><i class="fas fa-user-times"></i></button>
                             <button onclick="dropEndpoint()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Drop"><i class="fas fa-trash-alt"></i></button>
                         </div>
                     </div>
@@ -476,6 +477,19 @@
         }
 
         async function truncateEndpoint() { if(confirm("⚠️ Alle data in deze collectie wissen?")) { await fetch(`${API}/api/admin/clear`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp })}); refresh(); } }
+        async function clearUserRecords() {
+            const defaultUser = (currentFilter.type === 'USER') ? currentFilter.value : '';
+            const clientId = prompt("Client ID van de gebruiker wiens records je wilt verwijderen:", defaultUser);
+            if (!clientId) return;
+            if(confirm(`⚠️ Alle records van gebruiker "${clientId}" in deze collectie wissen?`)) {
+                await fetch(`${API}/api/admin/clear_user_records`, {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ collection: currentEp, client_id: clientId })
+                });
+                refresh();
+            }
+        }
         async function dropEndpoint() { if(confirm("⛔ COLLECTIE VOLLEDIG VERWIJDEREN?")) { await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' }); window.location.reload(); } }
         function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
         async function doClone() { const d = prompt("Naam voor kopie:"); if(d) { await fetch(`${API}/api/admin/clone`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source: currentEp, destination: d })}); refresh(); } }
