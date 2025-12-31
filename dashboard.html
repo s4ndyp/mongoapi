@@ -132,7 +132,7 @@
                 </button>
             </header>
             
-            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-3">
+            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-2">
             </div>
         </main>
 
@@ -201,11 +201,11 @@
 
                             <div class="flex-grow flex flex-col h-full relative p-6">
                                 <div id="editor-actions" class="hidden absolute top-4 right-4 z-50 flex flex-col gap-2">
-                                    <button onclick="deleteRecord()" style="background-color: #ef4444; color: white; padding: 8px 24px; border-radius: 12px; font-size: 12px; font-weight: bold; border: none; cursor: pointer; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#dc2626'" onmouseout="this.style.backgroundColor='#ef4444'">
-                                        <i class="fas fa-trash mr-2"></i>Verwijder record
+                                    <button onclick="saveRecord()" class="w-10 h-10 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 flex items-center justify-center text-emerald-500 transition border border-emerald-500/20" title="Bewaar wijzigingen">
+                                        <i class="fas fa-save"></i>
                                     </button>
-                                    <button onclick="saveRecord()" style="background-color: #10b981; color: white; padding: 8px 24px; border-radius: 12px; font-size: 12px; font-weight: bold; border: none; cursor: pointer; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#059669'" onmouseout="this.style.backgroundColor='#10b981'">
-                                        <i class="fas fa-save mr-2"></i>Bewaar wijzigingen
+                                    <button onclick="deleteRecord()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Verwijder record">
+                                        <i class="fas fa-trash"></i>
                                     </button>
                                 </div>
                                 <div id="editor-placeholder" class="m-auto text-slate-600 text-sm">Selecteer een resultaat uit de lijst</div>
@@ -365,21 +365,21 @@
                 const retentionText = (!ep.ttl || ep.ttl == 0) ? 'Never' : `${ep.ttl}d`;
                 const retentionIcon = (!ep.ttl || ep.ttl == 0) ? '' : '<i class="fas fa-hourglass-half mr-1 opacity-50"></i>';
                 
-                return `<div class="p-5 rounded-2xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
-                    <div class="flex justify-between items-start mb-4">
+                return `<div class="p-3 rounded-xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
+                    <div class="flex justify-between items-start mb-2">
                         <div class="font-mono text-sm text-slate-200 font-bold tracking-tighter truncate w-64">${ep.name}</div>
-                        <div class="w-2.5 h-2.5 rounded-full ${statusClass} mt-1"></div>
+                        <div class="w-2 h-2 rounded-full ${statusClass} mt-1"></div>
                     </div>
                     <div class="flex justify-between items-center">
-                        <div class="flex items-center gap-3">
-                            <span class="text-[10px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJ</span>
-                            <span class="text-[10px] font-bold text-slate-600 flex items-center">${retentionIcon}${retentionText}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[9px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJ</span>
+                            <span class="text-[9px] font-bold text-slate-600 flex items-center">${retentionIcon}${retentionText}</span>
                         </div>
                         <div class="flex items-center">
-                            <i class="fas fa-lock text-[11px] ${ep.locked ? 'text-red-500' : 'text-emerald-500 opacity-30'}"></i>
+                            <i class="fas fa-lock text-[10px] ${ep.locked ? 'text-red-500' : 'text-emerald-500 opacity-30'}"></i>
                         </div>
                     </div>
-                    <div class="size-bar"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
+                    <div class="size-bar mt-2"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
             }).join('');
         }
