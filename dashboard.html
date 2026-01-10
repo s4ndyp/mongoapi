@@ -132,7 +132,7 @@
                 </button>
             </header>
             
-            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-3">
+            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-2">
             </div>
         </main>
 
@@ -165,6 +165,7 @@
                             <button onclick="triggerImport()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Import"><i class="fas fa-upload"></i></button>
                             <button onclick="doClone()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Kloon"><i class="fas fa-copy"></i></button>
                             <button onclick="truncateEndpoint()" class="w-10 h-10 rounded-xl bg-yellow-500/10 hover:bg-yellow-500/20 flex items-center justify-center text-yellow-500 transition border border-yellow-500/20" title="Leegmaken"><i class="fas fa-eraser"></i></button>
+                            <button onclick="clearUserRecords()" class="w-10 h-10 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 flex items-center justify-center text-orange-500 transition border border-orange-500/20" title="Verwijder gebruiker records"><i class="fas fa-user-times"></i></button>
                             <button onclick="dropEndpoint()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Drop"><i class="fas fa-trash-alt"></i></button>
                         </div>
                     </div>
@@ -199,9 +200,12 @@
                             </div>
 
                             <div class="flex-grow flex flex-col h-full relative p-6">
-                                <div id="editor-actions" class="hidden absolute top-10 right-10 z-10 flex gap-2">
-                                    <button onclick="saveRecord()" class="px-6 py-2 bg-secondary text-white rounded-xl text-xs font-bold shadow-xl shadow-secondary/20 hover:opacity-90 transition">
-                                        <i class="fas fa-save mr-2"></i>Bewaar wijzigingen
+                                <div id="editor-actions" class="hidden absolute top-4 right-4 z-50 flex flex-col gap-2">
+                                    <button onclick="saveRecord()" class="w-10 h-10 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 flex items-center justify-center text-emerald-500 transition border border-emerald-500/20" title="Bewaar wijzigingen">
+                                        <i class="fas fa-save"></i>
+                                    </button>
+                                    <button onclick="deleteRecord()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Verwijder record">
+                                        <i class="fas fa-trash"></i>
                                     </button>
                                 </div>
                                 <div id="editor-placeholder" class="m-auto text-slate-600 text-sm">Selecteer een resultaat uit de lijst</div>
@@ -361,21 +365,21 @@
                 const retentionText = (!ep.ttl || ep.ttl == 0) ? 'Never' : `${ep.ttl}d`;
                 const retentionIcon = (!ep.ttl || ep.ttl == 0) ? '' : '<i class="fas fa-hourglass-half mr-1 opacity-50"></i>';
                 
-                return `<div class="p-5 rounded-2xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
-                    <div class="flex justify-between items-start mb-4">
+                return `<div class="p-3 rounded-xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
+                    <div class="flex justify-between items-start mb-2">
                         <div class="font-mono text-sm text-slate-200 font-bold tracking-tighter truncate w-64">${ep.name}</div>
-                        <div class="w-2.5 h-2.5 rounded-full ${statusClass} mt-1"></div>
+                        <div class="w-2 h-2 rounded-full ${statusClass} mt-1"></div>
                     </div>
                     <div class="flex justify-between items-center">
-                        <div class="flex items-center gap-3">
-                            <span class="text-[10px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJ</span>
-                            <span class="text-[10px] font-bold text-slate-600 flex items-center">${retentionIcon}${retentionText}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[9px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJ</span>
+                            <span class="text-[9px] font-bold text-slate-600 flex items-center">${retentionIcon}${retentionText}</span>
                         </div>
                         <div class="flex items-center">
-                            <i class="fas fa-lock text-[11px] ${ep.locked ? 'text-red-500' : 'text-emerald-500 opacity-30'}"></i>
+                            <i class="fas fa-lock text-[10px] ${ep.locked ? 'text-red-500' : 'text-emerald-500 opacity-30'}"></i>
                         </div>
                     </div>
-                    <div class="size-bar"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
+                    <div class="size-bar mt-2"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
             }).join('');
         }
@@ -420,6 +424,7 @@
                 document.getElementById('json-editor').classList.remove('hidden');
                 document.getElementById('editor-placeholder').classList.add('hidden');
                 document.getElementById('editor-actions').classList.remove('hidden');
+                console.log('Record loaded, editor-actions should be visible');
             }
         }
 
@@ -429,6 +434,33 @@
                 await fetch(`${API}/api/admin/record/${currentEp}/${currentRecordId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
                 refresh();
             } catch(e) { console.error("Invalid JSON"); }
+        }
+
+        async function deleteRecord() {
+            console.log('Delete button clicked, currentRecordId:', currentRecordId);
+            if (!currentRecordId) {
+                console.log('No currentRecordId, returning');
+                return;
+            }
+            if (!confirm('Weet je zeker dat je dit record wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.')) return;
+
+            try {
+                console.log('Making DELETE request to:', `${API}/api/admin/record/${currentEp}/${currentRecordId}`);
+                const response = await fetch(`${API}/api/admin/record/${currentEp}/${currentRecordId}`, { method: 'DELETE' });
+                console.log('DELETE response:', response.status);
+                if (response.ok) {
+                    // Clear the current record view
+                    document.getElementById('json-editor').classList.add('hidden');
+                    document.getElementById('editor-placeholder').classList.remove('hidden');
+                    document.getElementById('editor-actions').classList.add('hidden');
+                    currentRecordId = null;
+                    refresh();
+                } else {
+                    console.error('Failed to delete record');
+                }
+            } catch(e) {
+                console.error("Error deleting record:", e);
+            }
         }
 
         function triggerImport() { document.getElementById('import-input').click(); }
@@ -445,6 +477,19 @@
         }
 
         async function truncateEndpoint() { if(confirm("⚠️ Alle data in deze collectie wissen?")) { await fetch(`${API}/api/admin/clear`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp })}); refresh(); } }
+        async function clearUserRecords() {
+            const defaultUser = (currentFilter.type === 'USER') ? currentFilter.value : '';
+            const clientId = prompt("Client ID van de gebruiker wiens records je wilt verwijderen:", defaultUser);
+            if (!clientId) return;
+            if(confirm(`⚠️ Alle records van gebruiker "${clientId}" in deze collectie wissen?`)) {
+                await fetch(`${API}/api/admin/clear_user_records`, {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ collection: currentEp, client_id: clientId })
+                });
+                refresh();
+            }
+        }
         async function dropEndpoint() { if(confirm("⛔ COLLECTIE VOLLEDIG VERWIJDEREN?")) { await fetch(`${API}/api/admin/collections/${currentEp}`, { method: 'DELETE' }); window.location.reload(); } }
         function downloadEndpoint() { window.location.href = `${API}/api/admin/export/${currentEp}`; }
         async function doClone() { const d = prompt("Naam voor kopie:"); if(d) { await fetch(`${API}/api/admin/clone`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source: currentEp, destination: d })}); refresh(); } }

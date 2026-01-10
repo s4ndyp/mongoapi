@@ -239,6 +239,19 @@ def admin_clear():
     res = db[col].delete_many({})
     return jsonify({"deleted": res.deleted_count})
 
+@app.route('/api/admin/clear_user_records', methods=['POST'])
+def admin_clear_user_records():
+    """Wist alle records van een specifieke gebruiker in een collectie."""
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    data = request.json
+    col = data.get('collection')
+    client_id = data.get('client_id')
+    if not col: return jsonify({'error': 'Geen collectie opgegeven'}), 400
+    if not client_id: return jsonify({'error': 'Geen client_id opgegeven'}), 400
+    res = db[col].delete_many({'_meta.owner': client_id})
+    return jsonify({"deleted": res.deleted_count})
+
 @app.route('/api/admin/bulk_delete', methods=['POST'])
 def admin_bulk_delete():
     db = get_db()
@@ -288,21 +301,28 @@ def admin_cleanup():
             report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
     return jsonify({"report": report})
 
-@app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT'])
+@app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT', 'DELETE'])
 def admin_update_record(col_name, doc_id):
     db = get_db()
     if db is None: return jsonify({'error': 'DB Offline'}), 500
     try:
-        new_doc = request.json
-        meta = {
-            'owner': new_doc.get('_client_id'),
-            'created_at': datetime.datetime.strptime(new_doc.get('_created_at'), '%Y-%m-%d %H:%M:%S') if new_doc.get('_created_at') else None,
-            'updated_at': datetime.datetime.utcnow()
-        }
-        data = clean_incoming_data(new_doc)
-        data['_meta'] = meta
-        db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
-        return jsonify({"status": "saved"})
+        if request.method == 'PUT':
+            new_doc = request.json
+            meta = {
+                'owner': new_doc.get('_client_id'),
+                'created_at': datetime.datetime.strptime(new_doc.get('_created_at'), '%Y-%m-%d %H:%M:%S') if new_doc.get('_created_at') else None,
+                'updated_at': datetime.datetime.utcnow()
+            }
+            data = clean_incoming_data(new_doc)
+            data['_meta'] = meta
+            db[col_name].replace_one({'_id': ObjectId(doc_id)}, data)
+            return jsonify({"status": "saved"})
+        elif request.method == 'DELETE':
+            result = db[col_name].delete_one({'_id': ObjectId(doc_id)})
+            if result.deleted_count > 0:
+                return jsonify({"status": "deleted"})
+            else:
+                return jsonify({"error": "Record not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
