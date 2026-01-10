@@ -301,6 +301,17 @@ def admin_cleanup():
             report.append(f"{col_name}: {res.deleted_count} items verwijderd (> {days} dagen).")
     return jsonify({"report": report})
 
+@app.route('/api/admin/clear_errors', methods=['POST'])
+def admin_clear_errors():
+    """Wis alle systeem error logs."""
+    db = get_db()
+    if db is None: return jsonify({'error': 'DB Offline'}), 500
+    try:
+        result = db['_g2_errors'].delete_many({})
+        return jsonify({"deleted": result.deleted_count, "message": f"{result.deleted_count} error logs gewist"})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/admin/record/<col_name>/<doc_id>', methods=['PUT', 'DELETE'])
 def admin_update_record(col_name, doc_id):
     db = get_db()
