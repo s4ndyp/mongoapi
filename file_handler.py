@@ -71,7 +71,19 @@ def upload_file(endpoint):
 
 @file_bp.route('/<endpoint>/files/<path:filename>', methods=['GET'])
 def get_file(endpoint, filename):
-# ... (existing code) ...
+    """
+    Endpoint om een bestand op te halen voor een specifieke endpoint en client.
+    URL: GET /api/<endpoint>/files/<filename>
+    """
+    client_id = request.headers.get('x-client-id') or request.args.get('client_id')
+    if not client_id:
+        return jsonify({"error": "Missing x-client-id header or client_id param"}), 400
+        
+    client_dir = os.path.join(UPLOAD_FOLDER, endpoint, client_id)
+    try:
+        return send_from_directory(client_dir, filename)
+    except FileNotFoundError:
+        return jsonify({"error": "File not found"}), 404
 
 @file_bp.route('/admin/files/<endpoint>', methods=['GET'])
 def admin_list_files(endpoint):
