@@ -7,9 +7,11 @@ from flask import Flask, request, jsonify, g, Response, send_from_directory
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson import ObjectId
+from file_handler import file_bp
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
+app.register_blueprint(file_bp, url_prefix='/api')
 
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
 
@@ -158,8 +160,35 @@ def admin_stats():
         'msg': e['error']
     } for e in errors]
 
+    # File statistics
+    file_storage_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'local_storage')
+    file_endpoints = []
+    if os.path.exists(file_storage_path):
+        for ep in os.listdir(file_storage_path):
+            ep_path = os.path.join(file_storage_path, ep)
+            if os.path.isdir(ep_path):
+                file_count = 0
+                total_size = 0
+                clients = []
+                for client in os.listdir(ep_path):
+                    client_path = os.path.join(ep_path, client)
+                    if os.path.isdir(client_path):
+                        clients.append(client)
+                        client_files = os.listdir(client_path)
+                        file_count += len(client_files)
+                        for f in client_files:
+                            total_size += os.path.getsize(os.path.join(client_path, f))
+                
+                file_endpoints.append({
+                    'name': ep,
+                    'count': file_count,
+                    'owners': clients,
+                    'size_mb': round(total_size / (1024 * 1024), 2)
+                })
+
     return jsonify({
         'endpoints': endpoint_stats,
+        'file_endpoints': file_endpoints,
         'clients': client_stats,
         'errors': formatted_errors,
         'db_info': {

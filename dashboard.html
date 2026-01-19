@@ -125,14 +125,25 @@
         </aside>
 
         <main class="flex flex-col bg-dark/20 z-10 border-r border-white/5">
-            <header class="p-8 pb-4 flex justify-between items-end">
-                <div>
-                    <h2 id="list-title" class="text-2xl font-bold text-white tracking-tight">Endpoints</h2>
-                    <p class="text-xs text-slate-500 mt-1" id="stat-db-size">Database: 0.00 MB</p>
+            <header class="p-8 pb-4">
+                <div class="flex justify-between items-end mb-6">
+                    <div>
+                        <h2 id="list-title" class="text-2xl font-bold text-white tracking-tight">Endpoints</h2>
+                        <p class="text-xs text-slate-500 mt-1" id="stat-db-size">Database: 0.00 MB</p>
+                    </div>
+                    <button onclick="refresh()" class="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 transition-all border border-white/5">
+                        <i id="refresh-icon" class="fas fa-sync-alt"></i>
+                    </button>
                 </div>
-                <button onclick="refresh()" class="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 transition-all border border-white/5">
-                    <i id="refresh-icon" class="fas fa-sync-alt"></i>
-                </button>
+                
+                <div class="flex bg-dark_paper/50 p-1 rounded-xl border border-white/5 w-full">
+                    <button onclick="switchMode('DB')" id="mode-btn-db" class="flex-1 py-2 rounded-lg text-xs font-bold bg-primary text-white shadow-lg transition-all">
+                        <i class="fas fa-database mr-2"></i>Database
+                    </button>
+                    <button onclick="switchMode('FILES')" id="mode-btn-files" class="flex-1 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-white transition-all">
+                        <i class="fas fa-file-alt mr-2"></i>Files
+                    </button>
+                </div>
             </header>
             
             <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-1 max-h-full">
@@ -291,6 +302,28 @@
         let currentFilter = { type: 'ALL', value: null };
         let currentEp = null;
         let currentRecordId = null;
+        let currentFileClientId = null;
+        let currentMode = 'DB'; // 'DB' of 'FILES'
+
+        function switchMode(m) {
+            currentMode = m;
+            currentEp = null;
+            
+            // UI Update voor buttons
+            document.getElementById('mode-btn-db').className = m === 'DB' 
+                ? "flex-1 py-2 rounded-lg text-xs font-bold bg-primary text-white shadow-lg transition-all"
+                : "flex-1 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-white transition-all";
+            
+            document.getElementById('mode-btn-files').className = m === 'FILES'
+                ? "flex-1 py-2 rounded-lg text-xs font-bold bg-primary text-white shadow-lg transition-all"
+                : "flex-1 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-white transition-all";
+
+            document.getElementById('list-title').innerText = m === 'DB' ? "Database Endpoints" : "File Endpoints";
+            document.getElementById('detail-content').classList.add('hidden');
+            document.getElementById('detail-placeholder').classList.remove('hidden');
+            
+            renderEndpointsList();
+        }
 
         async function refresh() {
             const icon = document.getElementById('refresh-icon');
@@ -302,7 +335,9 @@
                 
                 globalData = await res.json();
                 document.getElementById('stat-db-size').innerText = `Database: ${globalData.db_info.data_size_mb} MB | Records: ${globalData.db_info.total_objects}`;
-                document.getElementById('count-all').innerText = globalData.endpoints.length;
+                
+                const endpointsToCount = currentMode === 'DB' ? globalData.endpoints : globalData.file_endpoints;
+                document.getElementById('count-all').innerText = endpointsToCount.length;
                 
                 renderSidebar();
                 renderEndpointsList();
@@ -322,7 +357,9 @@
         function renderSidebar() {
             if(!globalData) return;
             const apps = {};
-            globalData.endpoints.forEach(ep => {
+            const endpointsToProcess = currentMode === 'DB' ? globalData.endpoints : globalData.file_endpoints;
+            
+            endpointsToProcess.forEach(ep => {
                 if(ep.name.includes('_')) {
                     const app = ep.name.split('_')[0];
                     apps[app] = (apps[app] || 0) + 1;
@@ -336,13 +373,35 @@
                 </div>`
             ).join('');
 
-            document.getElementById('list-users').innerHTML = globalData.clients.map(c => `
-                <div class="flex justify-between items-center px-4 py-2.5 rounded-xl cursor-pointer hover:bg-white/5 transition-all group ${currentFilter.value === c.client_id ? 'item-active text-white' : ''}" onclick="applyFilter('USER', '${c.client_id}')">
+            // Voor gebruikers in File mode gebruiken we de eigenaren uit file_endpoints
+            let userList = [];
+            if(currentMode === 'DB') {
+                userList = globalData.clients.map(c => ({
+                    id: c.client_id,
+                    count: c.total_records,
+                    last_seen: c.last_seen
+                }));
+            } else {
+                const fileOwners = {};
+                globalData.file_endpoints.forEach(ep => {
+                    ep.owners.forEach(o => {
+                        fileOwners[o] = (fileOwners[o] || 0) + ep.count;
+                    });
+                });
+                userList = Object.keys(fileOwners).map(o => ({
+                    id: o,
+                    count: fileOwners[o],
+                    last_seen: null
+                }));
+            }
+
+            document.getElementById('list-users').innerHTML = userList.map(u => `
+                <div class="flex justify-between items-center px-4 py-2.5 rounded-xl cursor-pointer hover:bg-white/5 transition-all group ${currentFilter.value === u.id ? 'item-active text-white' : ''}" onclick="applyFilter('USER', '${u.id}')">
                     <div class="flex flex-col overflow-hidden">
-                        <span class="text-xs font-bold group-hover:text-white transition-colors truncate">${c.client_id}</span>
-                        <span class="text-[9px] text-slate-600">${c.last_seen ? timeAgo(c.last_seen) : 'Nooit'}</span>
+                        <span class="text-xs font-bold group-hover:text-white transition-colors truncate">${u.id}</span>
+                        <span class="text-[9px] text-slate-600">${u.last_seen ? timeAgo(u.last_seen) : ''}</span>
                     </div>
-                    <span class="bg-dark_paper text-[9px] font-bold px-2 py-0.5 rounded-md ml-2">${c.total_records}</span>
+                    <span class="bg-dark_paper text-[9px] font-bold px-2 py-0.5 rounded-md ml-2">${u.count}</span>
                 </div>
             `).join('');
 
@@ -356,23 +415,35 @@
         function renderEndpointsList() {
             if(!globalData) return;
             const list = document.getElementById('endpoints-container');
-            let filtered = (currentFilter.type === 'ALL') ? globalData.endpoints :
-                           (currentFilter.type === 'APP') ? globalData.endpoints.filter(e => e.name.startsWith(currentFilter.value + '_')) :
-                           globalData.endpoints.filter(e => e.owners && e.owners.includes(currentFilter.value));
+            
+            let dataToRender = currentMode === 'DB' ? globalData.endpoints : globalData.file_endpoints;
+
+            let filtered = (currentFilter.type === 'ALL') ? dataToRender :
+                           (currentFilter.type === 'APP') ? dataToRender.filter(e => e.name.startsWith(currentFilter.value + '_')) :
+                           dataToRender.filter(e => e.owners && e.owners.includes(currentFilter.value));
 
             list.innerHTML = filtered.map(ep => {
                 let statusClass = 'bg-red-500';
                 let statusText = 'Offline';
-                if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) {
-                    statusClass = 'bg-emerald-500 glow-green';
-                    statusText = 'Recent';
+                if(currentMode === 'DB') {
+                    if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) {
+                        statusClass = 'bg-emerald-500 glow-green';
+                        statusText = 'Recent';
+                    }
+                } else {
+                    statusClass = 'bg-blue-500'; // Files hebben geen last_activity in stats nog
+                    statusText = 'Files';
                 }
 
                 const active = currentEp === ep.name ? 'item-active bg-white/5 scale-[1.02]' : 'hover:bg-white/5';
 
-                const retentionText = (!ep.ttl || ep.ttl == 0) ? '∞' : `${ep.ttl}d`;
+                const retentionText = (currentMode === 'FILES' || !ep.ttl || ep.ttl == 0) ? '∞' : `${ep.ttl}d`;
                 const lockText = ep.locked ? 'Locked' : 'Open';
                 const lockColor = ep.locked ? 'text-red-400' : 'text-emerald-400';
+
+                const icon = currentMode === 'DB' ? 'fa-database' : 'fa-folder';
+                const countInfo = currentMode === 'DB' ? ep.count : `${ep.count} files`;
+                const sizeInfo = currentMode === 'DB' ? `${ep.size_pct.toFixed(1)}%` : `${ep.size_mb} MB`;
 
                 return `<div class="px-4 py-3 rounded-xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
                     <div class="flex items-center justify-between gap-4">
@@ -382,16 +453,18 @@
                         </div>
                         <div class="flex items-center gap-6 text-[11px] font-bold flex-shrink-0">
                             <div class="text-slate-300">
-                                <i class="fas fa-database mr-1 opacity-70"></i>${ep.count}
+                                <i class="fas ${icon} mr-1 opacity-70"></i>${countInfo}
                             </div>
+                            ${currentMode === 'DB' ? `
                             <div class="text-slate-400">
                                 <i class="fas fa-clock mr-1 opacity-70"></i>${retentionText}
                             </div>
                             <div class="${lockColor}">
                                 <i class="fas fa-${ep.locked ? 'lock' : 'unlock'} mr-1 opacity-70"></i>${lockText}
                             </div>
+                            ` : ''}
                             <div class="text-slate-500">
-                                <i class="fas fa-chart-bar mr-1 opacity-70"></i>${ep.size_pct.toFixed(1)}%
+                                <i class="fas fa-chart-bar mr-1 opacity-70"></i>${sizeInfo}
                             </div>
                         </div>
                     </div>
@@ -403,31 +476,116 @@
 
         function loadDetail(n) {
             if(!globalData) return;
-            const ep = globalData.endpoints.find(e => e.name === n);
+            const endpoints = currentMode === 'DB' ? globalData.endpoints : globalData.file_endpoints;
+            const ep = endpoints.find(e => e.name === n);
             if(!ep) return;
             document.getElementById('detail-content').classList.remove('hidden');
             document.getElementById('detail-placeholder').classList.add('hidden');
             document.getElementById('det-name').innerText = n;
-            document.getElementById('set-locked').checked = ep.locked;
-            document.getElementById('set-ttl').value = ep.ttl || 0;
-            document.getElementById('det-lock-badge').classList.toggle('hidden', !ep.locked);
-            document.getElementById('det-ttl-badge').classList.toggle('hidden', !(ep.ttl > 0));
-            if(ep.ttl > 0) document.getElementById('det-ttl-val').innerText = ep.ttl;
+            
+            // Verberg/toon DB specifieke opties
+            const dbElements = ['det-lock-badge', 'det-ttl-badge', 'tab-btn-settings', 'editor-actions'];
+            dbElements.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.classList.toggle('hidden', currentMode === 'FILES');
+            });
+
+            if(currentMode === 'DB') {
+                document.getElementById('set-locked').checked = ep.locked;
+                document.getElementById('set-ttl').value = ep.ttl || 0;
+                document.getElementById('det-lock-badge').classList.toggle('hidden', !ep.locked);
+                document.getElementById('det-ttl-badge').classList.toggle('hidden', !(ep.ttl > 0));
+                if(ep.ttl > 0) document.getElementById('det-ttl-val').innerText = ep.ttl;
+                switchTab('data');
+            } else {
+                switchTab('data');
+                doSearch(); // Voor files is doSearch eigenlijk "load files"
+            }
         }
 
         async function doSearch() {
             const term = document.getElementById('search-term').value;
-            const res = await fetch(`${API}/api/admin/search`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, term })});
-            const docs = await res.json();
-            document.getElementById('search-results').innerHTML = docs.map(d => `
-                <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all group" onclick="loadRecord('${d._id}')">
-                    <div class="text-[11px] text-primary font-bold font-mono group-hover:scale-[1.02] transition-transform">${d._id}</div>
-                    <div class="flex justify-between mt-2">
-                        <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${d._client_id}</span>
-                        <span class="text-[9px] text-slate-600">${d._created_at}</span>
+            
+            if(currentMode === 'DB') {
+                const res = await fetch(`${API}/api/admin/search`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ collection: currentEp, term })});
+                const docs = await res.json();
+                document.getElementById('search-results').innerHTML = docs.map(d => `
+                    <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all group" onclick="loadRecord('${d._id}')">
+                        <div class="text-[11px] text-primary font-bold font-mono group-hover:scale-[1.02] transition-transform">${d._id}</div>
+                        <div class="flex justify-between mt-2">
+                            <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${d._client_id}</span>
+                            <span class="text-[9px] text-slate-600">${d._created_at}</span>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `).join('');
+            } else {
+                // File mode: Lijst bestanden
+                const res = await fetch(`${API}/api/admin/files/${currentEp}`);
+                const files = await res.json();
+                
+                // Filter files op search term indien aanwezig
+                const filteredFiles = term ? files.filter(f => f.filename.toLowerCase().includes(term.toLowerCase()) || f.client_id.toLowerCase().includes(term.toLowerCase())) : files;
+
+                document.getElementById('search-results').innerHTML = filteredFiles.map(f => `
+                    <div class="p-4 bg-dark/40 border border-white/5 rounded-2xl mb-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all group" onclick="loadFile('${f.client_id}', '${f.filename}', '${f.url}')">
+                        <div class="text-[11px] text-primary font-bold truncate group-hover:scale-[1.02] transition-transform">${f.filename}</div>
+                        <div class="flex justify-between mt-2">
+                            <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter"><i class="fas fa-user-circle mr-1 opacity-50"></i>${f.client_id}</span>
+                            <span class="text-[9px] text-slate-600">${(f.size/1024).toFixed(1)} KB</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        async function loadFile(clientId, filename, url) {
+            currentRecordId = filename;
+            currentFileClientId = clientId; // We hebben client_id nodig voor delete
+            
+            const fullUrl = API + url;
+            
+            // Toon een preview of info over het bestand
+            let content = `Bestand: ${filename}\nClient: ${clientId}\nURL: ${fullUrl}\n\n`;
+            
+            if(filename.match(/\.(json|txt|js|css|html)$/i)) {
+                try {
+                    const res = await fetch(fullUrl);
+                    const text = await res.text();
+                    content += "-- INHOUD --\n\n" + text;
+                } catch(e) { content += "[Kon inhoud niet laden]"; }
+            } else if(filename.match(/\.(jpg|jpeg|png|gif|svg|webp)$/i)) {
+                content += "[Afbeelding - open de URL voor weergave]";
+            } else {
+                content += "[Binair bestand]";
+            }
+
+            document.getElementById('json-editor').value = content;
+            document.getElementById('json-editor').classList.remove('hidden');
+            document.getElementById('editor-placeholder').classList.add('hidden');
+            
+            // Custom actions voor files
+            const actions = document.getElementById('editor-actions');
+            actions.innerHTML = `
+                <a href="${fullUrl}" target="_blank" class="w-10 h-10 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 flex items-center justify-center text-blue-500 transition border border-blue-500/20" title="Open in nieuw tabblad">
+                    <i class="fas fa-external-link-alt"></i>
+                </a>
+                <button onclick="deleteFile('${clientId}', '${filename}')" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Verwijder bestand">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+            actions.classList.remove('hidden');
+        }
+
+        async function deleteFile(clientId, filename) {
+            if(!confirm(`Weet je zeker dat je ${filename} wilt verwijderen?`)) return;
+            
+            const res = await fetch(`${API}/api/admin/files/${currentEp}/${clientId}/${filename}`, { method: 'DELETE' });
+            if(res.ok) {
+                document.getElementById('json-editor').classList.add('hidden');
+                document.getElementById('editor-placeholder').classList.remove('hidden');
+                document.getElementById('editor-actions').classList.add('hidden');
+                refresh();
+            }
         }
 
         async function loadRecord(id) {
@@ -438,8 +596,17 @@
                 document.getElementById('json-editor').value = JSON.stringify(docs[0], null, 4);
                 document.getElementById('json-editor').classList.remove('hidden');
                 document.getElementById('editor-placeholder').classList.add('hidden');
-                document.getElementById('editor-actions').classList.remove('hidden');
-                console.log('Record loaded, editor-actions should be visible');
+                
+                const actions = document.getElementById('editor-actions');
+                actions.innerHTML = `
+                    <button onclick="saveRecord()" class="w-10 h-10 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 flex items-center justify-center text-emerald-500 transition border border-emerald-500/20" title="Bewaar wijzigingen">
+                        <i class="fas fa-save"></i>
+                    </button>
+                    <button onclick="deleteRecord()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Verwijder record">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                `;
+                actions.classList.remove('hidden');
             }
         }
 
