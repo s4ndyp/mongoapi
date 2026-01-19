@@ -386,6 +386,11 @@ def dashboard_html():
         return send_from_directory(root_dir, 'dashboard.html')
     return "Dashboard HTML niet gevonden."
 
+@app.route('/test')
+def test_upload_html():
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    return send_from_directory(root_dir, 'test_upload.html')
+
 # Legacy Wrappers
 
 @app.route('/api/admin/rename', methods=['POST'])
