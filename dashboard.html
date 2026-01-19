@@ -25,7 +25,7 @@
 
         .main-layout {
             display: grid;
-            grid-template-columns: 280px 420px 1fr;
+            grid-template-columns: 280px 600px 1fr;
             height: 100vh;
             gap: 0;
             background: radial-gradient(circle at top right, #1e293b, #0f172a);
@@ -115,7 +115,10 @@
             <div class="p-6 bg-dark_paper/30 border-t border-white/5">
                 <div class="flex justify-between items-center mb-3">
                     <span class="text-[10px] font-bold text-slate-500 uppercase">Systeem Status</span>
-                    <button onclick="setApiUrl()" class="text-slate-500 hover:text-white transition"><i class="fas fa-cog"></i></button>
+                    <div class="flex gap-2">
+                        <button onclick="clearErrorLogs()" class="text-slate-500 hover:text-red-400 transition" title="Wis error logs"><i class="fas fa-trash-alt"></i></button>
+                        <button onclick="setApiUrl()" class="text-slate-500 hover:text-white transition"><i class="fas fa-cog"></i></button>
+                    </div>
                 </div>
                 <div id="list-errors" class="space-y-2 max-h-32 overflow-y-auto custom-scrollbar"></div>
             </div>
@@ -132,7 +135,7 @@
                 </button>
             </header>
             
-            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-2">
+            <div id="endpoints-container" class="flex-grow px-6 pb-8 custom-scrollbar overflow-y-auto space-y-1 max-h-full">
             </div>
         </main>
 
@@ -353,33 +356,45 @@
         function renderEndpointsList() {
             if(!globalData) return;
             const list = document.getElementById('endpoints-container');
-            let filtered = (currentFilter.type === 'ALL') ? globalData.endpoints : 
+            let filtered = (currentFilter.type === 'ALL') ? globalData.endpoints :
                            (currentFilter.type === 'APP') ? globalData.endpoints.filter(e => e.name.startsWith(currentFilter.value + '_')) :
                            globalData.endpoints.filter(e => e.owners && e.owners.includes(currentFilter.value));
-            
+
             list.innerHTML = filtered.map(ep => {
                 let statusClass = 'bg-red-500';
-                if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) statusClass = 'bg-emerald-500 glow-green';
+                let statusText = 'Offline';
+                if(ep.last_activity && (new Date() - new Date(ep.last_activity)) < 3600000) {
+                    statusClass = 'bg-emerald-500 glow-green';
+                    statusText = 'Recent';
+                }
+
                 const active = currentEp === ep.name ? 'item-active bg-white/5 scale-[1.02]' : 'hover:bg-white/5';
-                
-                const retentionText = (!ep.ttl || ep.ttl == 0) ? 'Never' : `${ep.ttl}d`;
-                const retentionIcon = (!ep.ttl || ep.ttl == 0) ? '' : '<i class="fas fa-hourglass-half mr-1 opacity-50"></i>';
-                
-                return `<div class="p-3 rounded-xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
-                    <div class="flex justify-between items-start mb-2">
-                        <div class="font-mono text-sm text-slate-200 font-bold tracking-tighter truncate w-64">${ep.name}</div>
-                        <div class="w-2 h-2 rounded-full ${statusClass} mt-1"></div>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <div class="flex items-center gap-2">
-                            <span class="text-[9px] font-black uppercase text-slate-500 tracking-widest">${ep.count} OBJ</span>
-                            <span class="text-[9px] font-bold text-slate-600 flex items-center">${retentionIcon}${retentionText}</span>
+
+                const retentionText = (!ep.ttl || ep.ttl == 0) ? '∞' : `${ep.ttl}d`;
+                const lockText = ep.locked ? 'Locked' : 'Open';
+                const lockColor = ep.locked ? 'text-red-400' : 'text-emerald-400';
+
+                return `<div class="px-4 py-3 rounded-xl glass-panel cursor-pointer transition-all duration-300 group ${active}" onclick="selectEp('${ep.name}')">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex items-center gap-3 min-w-0 flex-1">
+                            <div class="w-2 h-2 rounded-full ${statusClass} flex-shrink-0" title="${statusText}"></div>
+                            <div class="font-mono text-sm text-slate-200 font-bold tracking-tighter truncate min-w-0 flex-1">${ep.name}</div>
                         </div>
-                        <div class="flex items-center">
-                            <i class="fas fa-lock text-[10px] ${ep.locked ? 'text-red-500' : 'text-emerald-500 opacity-30'}"></i>
+                        <div class="flex items-center gap-6 text-[11px] font-bold flex-shrink-0">
+                            <div class="text-slate-300">
+                                <i class="fas fa-database mr-1 opacity-70"></i>${ep.count}
+                            </div>
+                            <div class="text-slate-400">
+                                <i class="fas fa-clock mr-1 opacity-70"></i>${retentionText}
+                            </div>
+                            <div class="${lockColor}">
+                                <i class="fas fa-${ep.locked ? 'lock' : 'unlock'} mr-1 opacity-70"></i>${lockText}
+                            </div>
+                            <div class="text-slate-500">
+                                <i class="fas fa-chart-bar mr-1 opacity-70"></i>${ep.size_pct.toFixed(1)}%
+                            </div>
                         </div>
                     </div>
-                    <div class="size-bar mt-2"><div class="size-fill shadow-lg glow-primary" style="width: ${ep.size_pct}%"></div></div>
                 </div>`;
             }).join('');
         }
@@ -515,17 +530,33 @@
             }
         }
 
-        async function saveSettings() { 
-            await fetch(`${API}/api/admin/settings`, { 
-                method: 'POST', 
-                headers: {'Content-Type':'application/json'}, 
-                body: JSON.stringify({ 
-                    collection: currentEp, 
-                    locked: document.getElementById('set-locked').checked, 
-                    ttl_days: document.getElementById('set-ttl').value 
+        async function saveSettings() {
+            await fetch(`${API}/api/admin/settings`, {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({
+                    collection: currentEp,
+                    locked: document.getElementById('set-locked').checked,
+                    ttl_days: document.getElementById('set-ttl').value
                 })
-            }); 
-            refresh(); 
+            });
+            refresh();
+        }
+
+        async function clearErrorLogs() {
+            if (!confirm('Weet je zeker dat je alle systeem error logs wilt wissen?')) return;
+            try {
+                const response = await fetch(`${API}/api/admin/clear_errors`, { method: 'POST' });
+                const result = await response.json();
+                if (response.ok) {
+                    alert(`Succes: ${result.message}`);
+                    refresh();
+                } else {
+                    alert(`Fout: ${result.error}`);
+                }
+            } catch (e) {
+                alert(`Fout bij wissen error logs: ${e.message}`);
+            }
         }
         
         function renderErrorLog() {
