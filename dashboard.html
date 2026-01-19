@@ -538,6 +538,14 @@
             }
         }
 
+        function closeEditor() {
+            document.getElementById('json-editor').classList.add('hidden');
+            document.getElementById('editor-placeholder').classList.remove('hidden');
+            document.getElementById('editor-actions').classList.add('hidden');
+            currentRecordId = null;
+            currentFileClientId = null;
+        }
+
         async function loadFile(clientId, filename, url) {
             currentRecordId = filename;
             currentFileClientId = clientId; // We hebben client_id nodig voor delete
@@ -572,6 +580,9 @@
                 <button onclick="deleteFile('${clientId}', '${filename}')" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Verwijder bestand">
                     <i class="fas fa-trash"></i>
                 </button>
+                <button onclick="closeEditor()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Sluiten">
+                    <i class="fas fa-times"></i>
+                </button>
             `;
             actions.classList.remove('hidden');
         }
@@ -604,6 +615,9 @@
                     </button>
                     <button onclick="deleteRecord()" class="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center text-red-500 transition border border-red-500/20" title="Verwijder record">
                         <i class="fas fa-trash"></i>
+                    </button>
+                    <button onclick="closeEditor()" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition border border-white/10" title="Sluiten">
+                        <i class="fas fa-times"></i>
                     </button>
                 `;
                 actions.classList.remove('hidden');

@@ -84,6 +84,25 @@ def get_file(ep_name, filename):
     except FileNotFoundError:
         return jsonify({"error": "File not found"}), 404
 
+@file_bp.route('/<ep_name>/files/<path:filename>', methods=['DELETE'])
+def delete_file(ep_name, filename):
+    """
+    Endpoint om een bestand te verwijderen.
+    URL: DELETE /api/<ep_name>/files/<filename>
+    """
+    client_id = request.headers.get('x-client-id') or request.args.get('client_id')
+    if not client_id:
+        return jsonify({"error": "Missing x-client-id header or client_id param"}), 400
+        
+    file_path = os.path.join(UPLOAD_FOLDER, ep_name, client_id, filename)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            return jsonify({"status": "deleted"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "File not found"}), 404
+
 @file_bp.route('/admin/files/<ep_name>', methods=['GET'])
 def admin_list_files(ep_name):
     """
